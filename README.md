@@ -8,7 +8,7 @@ IMU. Not the register-level HAL that [`esp-hal`](https://github.com/esp-rs/esp-h
 in this crate talks to a register.
 
 ```text
-apps/*                              the iced applications
+vendor/pomelo-apps/*                the iced applications
         ↑   Arc<Board>, injected by the composition root
 pomelo-hal                          traits · types · Board facade · simulator   ← this crate
         ↑   implemented by
