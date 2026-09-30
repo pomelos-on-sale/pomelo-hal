@@ -155,3 +155,13 @@ impl Vec3 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 }
+
+/// An abstract user input action (physical button, gesture, or navigation command).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputAction {
+    /// Back navigation: return to previous page/screen, close modal, or keep app in background.
+    Back,
+    /// Exit / Kill: terminate the current app and release its memory.
+    Exit,
+}
+

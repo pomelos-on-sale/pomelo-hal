@@ -9,7 +9,9 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use crate::traits::{AudioBackend, ImuBackend, MicBackend, PowerBackend, WifiBackend};
+use crate::traits::{
+    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, WifiBackend,
+};
 
 /// A shared handle to every hardware subsystem.
 ///
@@ -22,12 +24,13 @@ pub struct Board {
     audio: Mutex<Box<dyn AudioBackend>>,
     mic: Mutex<Box<dyn MicBackend>>,
     imu: Mutex<Box<dyn ImuBackend>>,
+    input: Mutex<Box<dyn InputBackend>>,
 }
 
 impl Board {
     /// Assemble a board from one backend per subsystem.
     ///
-    /// The order is `power`, `wifi`, `audio`, `mic`, `imu` — the same order the accessors
+    /// The order is `power`, `wifi`, `audio`, `mic`, `imu`, `input` — the same order the accessors
     /// appear in. It takes boxes rather than generics so the caller can mix concrete types
     /// and, in a test, its own fakes.
     pub fn from_backends(
@@ -36,6 +39,7 @@ impl Board {
         audio: Box<dyn AudioBackend>,
         mic: Box<dyn MicBackend>,
         imu: Box<dyn ImuBackend>,
+        input: Box<dyn InputBackend>,
     ) -> Self {
         Self {
             power: Mutex::new(power),
@@ -43,19 +47,21 @@ impl Board {
             audio: Mutex::new(audio),
             mic: Mutex::new(mic),
             imu: Mutex::new(imu),
+            input: Mutex::new(input),
         }
     }
 
     /// A board of desktop simulator backends.
     #[cfg(not(target_os = "espidf"))]
     pub fn simulated() -> Self {
-        use crate::sim::{SimAudio, SimImu, SimMic, SimPower, SimWifi};
+        use crate::sim::{SimAudio, SimImu, SimInput, SimMic, SimPower, SimWifi};
         Self::from_backends(
             Box::new(SimPower::new()),
             Box::new(SimWifi::new()),
             Box::new(SimAudio::new()),
             Box::new(SimMic::new()),
             Box::new(SimImu::new()),
+            Box::new(SimInput::new()),
         )
     }
 
@@ -93,11 +99,17 @@ impl Board {
         lock(&self.imu)
     }
 
+    /// Lock the input backend.
+    pub fn input(&self) -> MutexGuard<'_, Box<dyn InputBackend>> {
+        lock(&self.input)
+    }
+
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF
-    /// detection). Call once per UI frame.
+    /// detection, input debouncing). Call once per UI frame.
     pub fn tick(&self) {
         self.wifi().tick();
         self.audio().tick();
+        self.input().tick();
     }
 }
 

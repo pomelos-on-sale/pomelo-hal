@@ -10,12 +10,14 @@
 
 mod audio;
 mod imu;
+mod input;
 mod mic;
 mod power;
 mod wifi;
 
 pub use audio::SimAudio;
 pub use imu::SimImu;
+pub use input::SimInput;
 pub use mic::SimMic;
 pub use power::SimPower;
 pub use wifi::SimWifi;
