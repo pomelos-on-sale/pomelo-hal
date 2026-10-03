@@ -12,6 +12,16 @@ use std::sync::{Mutex, MutexGuard};
 use crate::traits::{
     AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, WifiBackend,
 };
+use crate::types::{SystemEvent, WifiStatus};
+
+pub type EventListener = Box<dyn Fn(&SystemEvent) + Send + Sync>;
+
+#[derive(Default)]
+struct EventStateCache {
+    last_battery: Option<u8>,
+    last_charging: Option<bool>,
+    last_wifi_status: Option<WifiStatus>,
+}
 
 /// A shared handle to every hardware subsystem.
 ///
@@ -25,6 +35,8 @@ pub struct Board {
     mic: Mutex<Box<dyn MicBackend>>,
     imu: Mutex<Box<dyn ImuBackend>>,
     input: Mutex<Box<dyn InputBackend>>,
+    listeners: Mutex<Vec<EventListener>>,
+    cache: Mutex<EventStateCache>,
 }
 
 impl Board {
@@ -48,6 +60,8 @@ impl Board {
             mic: Mutex::new(mic),
             imu: Mutex::new(imu),
             input: Mutex::new(input),
+            listeners: Mutex::new(Vec::new()),
+            cache: Mutex::new(EventStateCache::default()),
         }
     }
 
@@ -72,6 +86,19 @@ impl Board {
     pub fn init(&self) {
         let _ = self.power().init();
         let _ = self.wifi().init();
+    }
+
+    /// Register an event listener callback for system hardware events.
+    pub fn on_event(&self, listener: impl Fn(&SystemEvent) + Send + Sync + 'static) {
+        lock(&self.listeners).push(Box::new(listener));
+    }
+
+    /// Broadcast an event to all registered listeners.
+    pub fn emit_event(&self, event: SystemEvent) {
+        let listeners = lock(&self.listeners);
+        for listener in listeners.iter() {
+            listener(&event);
+        }
     }
 
     /// Lock the power/battery backend.
@@ -110,6 +137,46 @@ impl Board {
         self.wifi().tick();
         self.audio().tick();
         self.input().tick();
+
+        // 1. Check user input actions
+        if let Some(action) = self.input().poll_action() {
+            self.emit_event(SystemEvent::InputAction(action));
+        }
+
+        // 2. Check power changes
+        let battery_opt = self.power().battery_percent().ok();
+        let charging_opt = self.power().is_charging().ok();
+        let voltage = self.power().battery_voltage_mv().unwrap_or(0);
+
+        // 3. Check wifi status changes
+        let wifi_status = self.wifi().status();
+
+        let mut events_to_emit = Vec::new();
+        {
+            let mut cache = lock(&self.cache);
+            if battery_opt.is_some()
+                && (cache.last_battery != battery_opt || cache.last_charging != charging_opt)
+            {
+                cache.last_battery = battery_opt;
+                cache.last_charging = charging_opt;
+                if let Some(percent) = battery_opt {
+                    events_to_emit.push(SystemEvent::BatteryChanged {
+                        percent,
+                        charging: charging_opt.unwrap_or(false),
+                        voltage_mv: voltage,
+                    });
+                }
+            }
+
+            if cache.last_wifi_status.as_ref() != Some(&wifi_status) {
+                cache.last_wifi_status = Some(wifi_status.clone());
+                events_to_emit.push(SystemEvent::WifiStatusChanged(wifi_status));
+            }
+        }
+
+        for ev in events_to_emit {
+            self.emit_event(ev);
+        }
     }
 }
 

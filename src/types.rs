@@ -165,3 +165,19 @@ pub enum InputAction {
     Exit,
 }
 
+/// A hardware or system event emitted by the board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SystemEvent {
+    /// Battery or power supply status changed.
+    BatteryChanged {
+        percent: u8,
+        charging: bool,
+        voltage_mv: u32,
+    },
+    /// Wi-Fi connection status or signal changed.
+    WifiStatusChanged(WifiStatus),
+    /// User input action.
+    InputAction(InputAction),
+}
+
+

@@ -191,3 +191,29 @@ fn sim_imu_reads_finite_values() {
     let temp = board.imu().temperature_c().unwrap();
     assert!((20.0..=45.0).contains(&temp), "unexpected temp {temp}");
 }
+
+#[test]
+fn board_event_listener_and_tick_change_detection() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let board = Board::simulated();
+    let event_count = Arc::new(AtomicUsize::new(0));
+
+    let count_clone = Arc::clone(&event_count);
+    board.on_event(move |_event| {
+        count_clone.fetch_add(1, Ordering::SeqCst);
+    });
+
+    // First tick detects initial state and emits events (Power & Wifi)
+    board.tick();
+    assert!(
+        event_count.load(Ordering::SeqCst) >= 2,
+        "initial tick should emit power and wifi status events"
+    );
+
+    // Explicit emit
+    board.emit_event(pomelo_hal::SystemEvent::InputAction(pomelo_hal::InputAction::Back));
+    assert!(event_count.load(Ordering::SeqCst) >= 3);
+}
+

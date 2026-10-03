@@ -36,7 +36,7 @@ pub mod sim;
 pub use board::Board;
 pub use error::HalError;
 pub use traits::{AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, WifiBackend};
-pub use types::{ApInfo, AudioMeta, InputAction, ScanState, Vec3, WifiState, WifiStatus};
+pub use types::{ApInfo, AudioMeta, InputAction, ScanState, SystemEvent, Vec3, WifiState, WifiStatus};
 
 /// Convenience import for application crates.
 pub mod prelude {
@@ -46,6 +46,6 @@ pub mod prelude {
         AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, WifiBackend,
     };
     pub use crate::types::{
-        ApInfo, AudioMeta, InputAction, ScanState, Vec3, WifiState, WifiStatus,
+        ApInfo, AudioMeta, InputAction, ScanState, SystemEvent, Vec3, WifiState, WifiStatus,
     };
 }
