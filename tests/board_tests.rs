@@ -126,6 +126,61 @@ fn sim_wifi_connect_requires_valid_credentials() {
     ));
 }
 
+/// The credentials a test remembers.
+fn credentials(ssid: &str, autoconnect: bool) -> pomelo_hal::wifi_credentials::WifiCredentials {
+    pomelo_hal::wifi_credentials::WifiCredentials {
+        enabled: true,
+        ssid: ssid.to_string(),
+        password: "hunter2".to_string(),
+        autoconnect,
+    }
+}
+
+/// What the file says is what the board does when it comes up.
+#[test]
+fn sim_wifi_boot_connects_to_the_remembered_network() {
+    let board = Board::simulated();
+
+    board
+        .wifi()
+        .remember(&credentials("Pomelo-OS", true))
+        .unwrap();
+    board.wifi().autoconnect().unwrap();
+
+    let status = board.wifi().status();
+    assert_eq!(status.state, WifiState::Connected);
+    assert_eq!(status.ssid, "Pomelo-OS");
+}
+
+/// `autoconnect = false` is a network to keep, not one to join unasked.
+#[test]
+fn sim_wifi_boot_leaves_a_network_alone_when_the_file_says_to() {
+    let board = Board::simulated();
+
+    board
+        .wifi()
+        .remember(&credentials("Pomelo-OS", false))
+        .unwrap();
+    board.wifi().autoconnect().unwrap();
+
+    assert_eq!(board.wifi().status().state, WifiState::Disconnected);
+    assert_eq!(
+        board.wifi().saved().map(|saved| saved.ssid),
+        Some("Pomelo-OS".to_string()),
+        "still remembered, and still not joined"
+    );
+}
+
+/// A board that has never been on a network comes up on nothing at all.
+#[test]
+fn sim_wifi_boot_without_a_file_joins_nothing() {
+    let board = Board::simulated();
+
+    board.wifi().autoconnect().unwrap();
+
+    assert_eq!(board.wifi().status().state, WifiState::Disconnected);
+}
+
 #[test]
 fn sim_audio_playback_lifecycle() {
     let board = Board::simulated();

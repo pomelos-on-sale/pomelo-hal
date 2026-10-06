@@ -3,6 +3,7 @@
 use crate::error::HalError;
 use crate::traits::WifiBackend;
 use crate::types::{ApInfo, ScanState, WifiState, WifiStatus};
+use crate::wifi_credentials::WifiCredentials;
 
 const SIM_APS: &[(&str, i8, bool, u8)] = &[
     ("ESP-Rust-5G", -46, true, 36),
@@ -26,6 +27,13 @@ pub struct SimWifi {
     scan_ticks_left: u8,
     connected: Option<(String, i8)>,
     jitter: i32,
+    /// In memory, and deliberately not on disk.
+    ///
+    /// A simulator that wrote to the person's home directory when they ran the test suite would make
+    /// the tests depend on the machine and the machine depend on the tests. The file itself is
+    /// exercised by `wifi_credentials`'s own tests, which use a directory of their own under the
+    /// system's temp directory; what the simulator has to get right is the *trait*, not `read_to_string`.
+    saved: Option<WifiCredentials>,
 }
 
 impl SimWifi {
@@ -36,6 +44,7 @@ impl SimWifi {
             scan_ticks_left: 0,
             connected: None,
             jitter: 0,
+            saved: None,
         }
     }
 }
@@ -47,8 +56,44 @@ impl Default for SimWifi {
 }
 
 impl WifiBackend for SimWifi {
+    fn saved(&self) -> Option<WifiCredentials> {
+        self.saved.clone()
+    }
+
+    fn remember(&mut self, credentials: &WifiCredentials) -> Result<(), HalError> {
+        self.saved = Some(credentials.clone());
+        Ok(())
+    }
+
+    fn forget(&mut self) -> Result<(), HalError> {
+        self.saved = None;
+        Ok(())
+    }
+
     fn init(&mut self) -> Result<(), HalError> {
         Ok(())
+    }
+
+    /// The same reading of the file the board does, so that the two do not drift apart.
+    ///
+    /// Which is the whole reason the simulator has it: the boot behaviour is a rule about a file,
+    /// and a rule only one side implements is a rule only testable on the side nobody can run here.
+    fn autoconnect(&mut self) -> Result<(), HalError> {
+        let Some(saved) = self.saved() else {
+            return Ok(());
+        };
+
+        if !saved.enabled {
+            return Ok(());
+        }
+
+        self.set_enabled(true)?;
+
+        if !saved.autoconnect {
+            return Ok(());
+        }
+
+        self.connect(&saved.ssid, &saved.password)
     }
 
     fn set_enabled(&mut self, on: bool) -> Result<(), HalError> {

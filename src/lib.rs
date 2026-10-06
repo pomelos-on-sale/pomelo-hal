@@ -28,6 +28,7 @@ pub mod error;
 pub mod traits;
 pub mod types;
 pub mod wav;
+pub mod wifi_credentials;
 
 /// Desktop simulator backends, on every platform that is not the device itself.
 #[cfg(not(target_os = "espidf"))]
@@ -37,6 +38,7 @@ pub use board::Board;
 pub use error::HalError;
 pub use traits::{AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, WifiBackend};
 pub use types::{ApInfo, AudioMeta, InputAction, ScanState, SystemEvent, Vec3, WifiState, WifiStatus};
+pub use wifi_credentials::WifiCredentials;
 
 /// Convenience import for application crates.
 pub mod prelude {
@@ -48,4 +50,5 @@ pub mod prelude {
     pub use crate::types::{
         ApInfo, AudioMeta, InputAction, ScanState, SystemEvent, Vec3, WifiState, WifiStatus,
     };
+    pub use crate::wifi_credentials::WifiCredentials;
 }

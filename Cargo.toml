@@ -10,6 +10,11 @@ repository = "https://github.com/pomelos-on-sale/pomelo-hal"
 crate-type = ["rlib"]
 
 [dependencies]
+# The configuration files. A board's settings are typed structs that round-trip to TOML, so the
+# reader, the writer and the type check are all one `derive` rather than a parser per file — see
+# `wifi_credentials`.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
 # Real desktop playback for the simulator audio backend. Optional so the
