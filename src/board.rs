@@ -12,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::traits::{
-    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, WifiBackend,
+    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, TimeBackend, WifiBackend,
 };
 use crate::types::{SystemEvent, WifiStatus};
 
@@ -40,6 +40,7 @@ pub struct Board {
     mic: Mutex<Box<dyn MicBackend>>,
     imu: Mutex<Box<dyn ImuBackend>>,
     input: Mutex<Box<dyn InputBackend>>,
+    time: Mutex<Box<dyn TimeBackend>>,
     listeners: Mutex<Vec<EventListener>>,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
@@ -60,6 +61,7 @@ impl Board {
         mic: Box<dyn MicBackend>,
         imu: Box<dyn ImuBackend>,
         input: Box<dyn InputBackend>,
+        time: Box<dyn TimeBackend>,
     ) -> Self {
         Self {
             power: Mutex::new(power),
@@ -68,6 +70,7 @@ impl Board {
             mic: Mutex::new(mic),
             imu: Mutex::new(imu),
             input: Mutex::new(input),
+            time: Mutex::new(time),
             listeners: Mutex::new(Vec::new()),
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
@@ -78,7 +81,7 @@ impl Board {
     /// A board of desktop simulator backends.
     #[cfg(not(target_os = "espidf"))]
     pub fn simulated() -> Self {
-        use crate::sim::{SimAudio, SimImu, SimInput, SimMic, SimPower, SimWifi};
+        use crate::sim::{SimAudio, SimImu, SimInput, SimMic, SimPower, SimTime, SimWifi};
         Self::from_backends(
             Box::new(SimPower::new()),
             Box::new(SimWifi::new()),
@@ -86,6 +89,7 @@ impl Board {
             Box::new(SimMic::new()),
             Box::new(SimImu::new()),
             Box::new(SimInput::new()),
+            Box::new(SimTime::new()),
         )
     }
 
@@ -170,6 +174,11 @@ impl Board {
     /// Lock the input backend.
     pub fn input(&self) -> MutexGuard<'_, Box<dyn InputBackend>> {
         lock(&self.input)
+    }
+
+    /// Lock the time/SNTP backend.
+    pub fn time(&self) -> MutexGuard<'_, Box<dyn TimeBackend>> {
+        lock(&self.time)
     }
 
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF

@@ -176,6 +176,10 @@ pub enum SystemEvent {
     },
     /// Wi-Fi connection status or signal changed.
     WifiStatusChanged(WifiStatus),
+    /// System time successfully synchronized with network (SNTP).
+    TimeSynced {
+        unix_secs: u64,
+    },
     /// User input action.
     InputAction(InputAction),
 }

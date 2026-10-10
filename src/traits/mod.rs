@@ -15,6 +15,7 @@ mod imu;
 mod input;
 mod mic;
 mod power;
+mod time;
 mod wifi;
 
 pub use audio::AudioBackend;
@@ -22,4 +23,5 @@ pub use imu::ImuBackend;
 pub use input::InputBackend;
 pub use mic::MicBackend;
 pub use power::PowerBackend;
+pub use time::TimeBackend;
 pub use wifi::WifiBackend;

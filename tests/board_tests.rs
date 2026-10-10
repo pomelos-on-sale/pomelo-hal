@@ -39,6 +39,8 @@ fn board_constructs_and_exposes_every_subsystem() {
     assert!(!board.mic().is_recording());
     assert!(board.imu().read_accel().is_ok());
     assert_eq!(board.input().poll_action(), None);
+    assert!(board.time().now_unix() > 0);
+    assert!(!board.time().is_synced());
     board.input().push_action(pomelo_hal::InputAction::Back);
     assert_eq!(board.input().poll_action(), Some(pomelo_hal::InputAction::Back));
     board.tick();
