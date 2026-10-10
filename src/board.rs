@@ -8,7 +8,7 @@
 //! `#[cfg]`.
 
 use std::collections::VecDeque;
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::traits::{
@@ -16,7 +16,7 @@ use crate::traits::{
 };
 use crate::types::{SystemEvent, WifiStatus};
 
-pub type EventListener = Box<dyn Fn(&SystemEvent) + Send + Sync>;
+pub type EventListener = Arc<dyn Fn(&SystemEvent) + Send + Sync>;
 
 const MAX_EVENT_QUEUE_SIZE: usize = 32;
 
@@ -100,13 +100,13 @@ impl Board {
 
     /// Register an event listener callback for system hardware events.
     pub fn on_event(&self, listener: impl Fn(&SystemEvent) + Send + Sync + 'static) {
-        lock(&self.listeners).push(Box::new(listener));
+        lock(&self.listeners).push(Arc::new(listener));
     }
 
     /// Broadcast an event to all registered listeners and queue it for synchronous consumers.
     pub fn emit_event(&self, event: SystemEvent) {
-        let listeners = lock(&self.listeners);
-        for listener in listeners.iter() {
+        let listeners: Vec<EventListener> = lock(&self.listeners).clone();
+        for listener in &listeners {
             listener(&event);
         }
 

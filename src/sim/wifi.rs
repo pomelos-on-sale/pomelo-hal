@@ -89,7 +89,7 @@ impl WifiBackend for SimWifi {
 
         self.set_enabled(true)?;
 
-        if !saved.autoconnect {
+        if !saved.has_network() || !saved.autoconnect {
             return Ok(());
         }
 

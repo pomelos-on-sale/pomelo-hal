@@ -95,11 +95,8 @@ pub struct WifiCredentials {
     #[serde(default)]
     pub enabled: bool,
 
-    /// The network's name, as it is broadcast. Not translated and not owned by us: it is the
-    /// network's own string.
-    ///
-    /// **No default.** A file that names no network is not a Wi-Fi file, and a `String` would happily
-    /// default to `""` and then connect to nothing without saying so.
+    /// The network's name, as it is broadcast. Empty if no network has been configured yet.
+    #[serde(default)]
     pub ssid: String,
 
     /// The password, in the clear. See the note at the top of the module.
@@ -131,6 +128,11 @@ struct Document {
 }
 
 impl WifiCredentials {
+    /// Checks whether a network profile has been configured with a non-empty SSID.
+    pub fn has_network(&self) -> bool {
+        !self.ssid.is_empty()
+    }
+
     /// Reads the file's text.
     ///
     /// A missing `[wifi]`, a missing `ssid`, a value of the wrong type — every one of them is an
@@ -282,16 +284,14 @@ mod tests {
     }
 
     #[test]
-    fn a_file_with_no_network_in_it_is_an_error() {
-        let error = WifiCredentials::parse("[wifi]\npassword = \"hunter2\"\n").unwrap_err();
-
-        assert!(
-            error.to_string().contains("ssid"),
-            "and the message names the field that is missing: {error}"
-        );
+    fn a_file_without_network_has_default_empty_ssid() {
+        let read = WifiCredentials::parse("[wifi]\nenabled = true\n").unwrap();
+        assert!(read.enabled);
+        assert_eq!(read.ssid, "");
+        assert!(!read.has_network());
         assert!(
             WifiCredentials::parse("").is_err(),
-            "a file with no `[wifi]` is an error too, and not an empty network"
+            "a file with no `[wifi]` table is an error, and not an empty network"
         );
     }
 

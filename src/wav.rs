@@ -52,6 +52,9 @@ pub fn parse_wav_header(bytes: &[u8]) -> Result<WavMetadata, String> {
             u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
         cursor += 8;
 
+        // RIFF specification requires chunks to be padded to 2-byte boundaries
+        let padded_size = (chunk_size + 1) & !1;
+
         if chunk_id == b"fmt " {
             if chunk_size < 14 || cursor + chunk_size > bytes.len() {
                 return Err("Malformed fmt chunk in WAV".to_string());
@@ -69,19 +72,23 @@ pub fn parse_wav_header(bytes: &[u8]) -> Result<WavMetadata, String> {
                 bits_per_sample = 16;
             }
             found_fmt = true;
-            cursor += chunk_size;
+            cursor += padded_size;
         } else if chunk_id == b"data" {
             data_offset = cursor;
             data_len = chunk_size;
             break; // Typically data is the main payload
         } else {
             // Skip unknown chunk (e.g. LIST, JUNK, ID3)
-            cursor += chunk_size;
+            cursor += padded_size;
         }
     }
 
     if !found_fmt {
         return Err("Missing 'fmt ' chunk in WAV file".to_string());
+    }
+
+    if data_offset == 0 {
+        return Err("Missing 'data' chunk in WAV file".to_string());
     }
 
     if byte_rate == 0 {
