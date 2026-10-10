@@ -11,6 +11,7 @@ pub struct SimPower {
     initial_percent: u8,
     secs_per_percent: f32,
     charging: bool,
+    display_on: bool,
 }
 
 impl SimPower {
@@ -20,6 +21,7 @@ impl SimPower {
             initial_percent: 88,
             secs_per_percent: 45.0,
             charging: true,
+            display_on: true,
         }
     }
 
@@ -51,5 +53,14 @@ impl PowerBackend for SimPower {
     fn battery_voltage_mv(&self) -> Result<u32, HalError> {
         // Linear map 0%..100% -> 3300..4200 mV.
         Ok(3300 + self.percent() as u32 * 9)
+    }
+
+    fn set_display_power(&mut self, on: bool) -> Result<(), HalError> {
+        self.display_on = on;
+        Ok(())
+    }
+
+    fn is_display_on(&self) -> Result<bool, HalError> {
+        Ok(self.display_on)
     }
 }

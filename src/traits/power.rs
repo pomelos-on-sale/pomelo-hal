@@ -12,4 +12,12 @@ pub trait PowerBackend: Send + Sync {
     fn is_charging(&self) -> Result<bool, HalError>;
     /// Battery voltage in millivolts.
     fn battery_voltage_mv(&self) -> Result<u32, HalError>;
+    /// Turns display panel power on or off. Default is a no-op returning `Ok(())`.
+    fn set_display_power(&mut self, _on: bool) -> Result<(), HalError> {
+        Ok(())
+    }
+    /// Whether the display panel is currently powered on.
+    fn is_display_on(&self) -> Result<bool, HalError> {
+        Ok(true)
+    }
 }

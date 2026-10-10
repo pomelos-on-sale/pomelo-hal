@@ -181,6 +181,16 @@ impl Board {
         lock(&self.time)
     }
 
+    /// Turns display panel power on or off.
+    pub fn set_display_power(&self, on: bool) -> Result<(), crate::error::HalError> {
+        self.power().set_display_power(on)
+    }
+
+    /// Whether display panel is currently powered on.
+    pub fn is_display_on(&self) -> bool {
+        self.power().is_display_on().unwrap_or(true)
+    }
+
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF
     /// detection, input debouncing). Call periodically or once per UI frame.
     pub fn tick(&self) {
@@ -192,7 +202,12 @@ impl Board {
         {
             // 1. Check user input actions (simulator)
             if let Some(action) = self.input().poll_action() {
-                self.emit_event(SystemEvent::InputAction(action));
+                if !self.is_display_on() {
+                    let _ = self.set_display_power(true);
+                    // Swallow input action when waking up display
+                } else {
+                    self.emit_event(SystemEvent::InputAction(action));
+                }
             }
 
             // 2. Check power changes

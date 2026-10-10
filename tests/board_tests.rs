@@ -274,3 +274,34 @@ fn board_event_listener_and_tick_change_detection() {
     assert!(event_count.load(Ordering::SeqCst) >= 3);
 }
 
+#[test]
+fn display_power_and_wake_swallowing() {
+    let board = Board::simulated();
+    assert!(board.is_display_on(), "display defaults to ON");
+
+    // Drain initial battery & wifi events from first tick
+    board.tick();
+    while board.poll_event().is_some() {}
+
+    // Turn off display (sleep)
+    board.set_display_power(false).unwrap();
+    assert!(!board.is_display_on(), "display should be OFF");
+
+    // Simulate pressing a button while sleeping
+    board.input().push_action(pomelo_hal::InputAction::Exit);
+
+    // Tick: should wake up display, but swallow the Exit action!
+    board.tick();
+    assert!(board.is_display_on(), "display should have woken up");
+    assert_eq!(board.poll_event(), None, "wake-up action must be swallowed, not queued");
+
+    // Next action while awake should be delivered normally
+    board.input().push_action(pomelo_hal::InputAction::Back);
+    board.tick();
+    assert_eq!(
+        board.poll_event(),
+        Some(pomelo_hal::SystemEvent::InputAction(pomelo_hal::InputAction::Back)),
+        "subsequent action after wake must be dispatched normally"
+    );
+}
+
