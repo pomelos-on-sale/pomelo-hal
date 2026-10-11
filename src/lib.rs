@@ -37,10 +37,12 @@ pub mod sim;
 pub use board::Board;
 pub use error::HalError;
 pub use traits::{
-    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, TimeBackend, WifiBackend,
+    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend, TimeBackend,
+    WifiBackend,
 };
 pub use types::{
-    ApInfo, AudioMeta, InputAction, ScanState, SystemEvent, Vec3, WifiState, WifiStatus,
+    ApInfo, AudioMeta, InputAction, ScanState, SdCardInfo, SdCardStatus, StorageStats, SystemEvent,
+    Vec3, WifiState, WifiStatus,
 };
 pub use wifi_credentials::WifiCredentials;
 
@@ -49,10 +51,12 @@ pub mod prelude {
     pub use crate::board::Board;
     pub use crate::error::HalError;
     pub use crate::traits::{
-        AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, TimeBackend, WifiBackend,
+        AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend,
+        TimeBackend, WifiBackend,
     };
     pub use crate::types::{
-        ApInfo, AudioMeta, InputAction, ScanState, SystemEvent, Vec3, WifiState, WifiStatus,
+        ApInfo, AudioMeta, InputAction, ScanState, SdCardInfo, SdCardStatus, StorageStats,
+        SystemEvent, Vec3, WifiState, WifiStatus,
     };
     pub use crate::wifi_credentials::WifiCredentials;
 }

@@ -12,9 +12,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::traits::{
-    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, TimeBackend, WifiBackend,
+    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend, TimeBackend,
+    WifiBackend,
 };
-use crate::types::{SystemEvent, WifiStatus};
+use crate::types::{SdCardStatus, SystemEvent, WifiStatus};
 
 pub type EventListener = Arc<dyn Fn(&SystemEvent) + Send + Sync>;
 
@@ -26,6 +27,7 @@ struct EventStateCache {
     last_battery: Option<u8>,
     last_charging: Option<bool>,
     last_wifi_status: Option<WifiStatus>,
+    last_sd_status: Option<SdCardStatus>,
 }
 
 /// A shared handle to every hardware subsystem.
@@ -41,6 +43,7 @@ pub struct Board {
     imu: Mutex<Box<dyn ImuBackend>>,
     input: Mutex<Box<dyn InputBackend>>,
     time: Mutex<Box<dyn TimeBackend>>,
+    storage: Mutex<Box<dyn StorageBackend>>,
     listeners: Mutex<Vec<EventListener>>,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
@@ -51,7 +54,7 @@ pub struct Board {
 impl Board {
     /// Assemble a board from one backend per subsystem.
     ///
-    /// The order is `power`, `wifi`, `audio`, `mic`, `imu`, `input` — the same order the accessors
+    /// The order is `power`, `wifi`, `audio`, `mic`, `imu`, `input`, `time`, `storage` — the same order the accessors
     /// appear in. It takes boxes rather than generics so the caller can mix concrete types
     /// and, in a test, its own fakes.
     pub fn from_backends(
@@ -62,6 +65,7 @@ impl Board {
         imu: Box<dyn ImuBackend>,
         input: Box<dyn InputBackend>,
         time: Box<dyn TimeBackend>,
+        storage: Box<dyn StorageBackend>,
     ) -> Self {
         Self {
             power: Mutex::new(power),
@@ -71,6 +75,7 @@ impl Board {
             imu: Mutex::new(imu),
             input: Mutex::new(input),
             time: Mutex::new(time),
+            storage: Mutex::new(storage),
             listeners: Mutex::new(Vec::new()),
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
@@ -81,7 +86,9 @@ impl Board {
     /// A board of desktop simulator backends.
     #[cfg(not(target_os = "espidf"))]
     pub fn simulated() -> Self {
-        use crate::sim::{SimAudio, SimImu, SimInput, SimMic, SimPower, SimTime, SimWifi};
+        use crate::sim::{
+            SimAudio, SimImu, SimInput, SimMic, SimPower, SimStorage, SimTime, SimWifi,
+        };
         Self::from_backends(
             Box::new(SimPower::new()),
             Box::new(SimWifi::new()),
@@ -90,6 +97,7 @@ impl Board {
             Box::new(SimImu::new()),
             Box::new(SimInput::new()),
             Box::new(SimTime::new()),
+            Box::new(SimStorage::new()),
         )
     }
 
@@ -100,6 +108,7 @@ impl Board {
     pub fn init(&self) {
         let _ = self.power().init();
         let _ = self.wifi().init();
+        let _ = self.storage().init();
     }
 
     /// Register an event listener callback for system hardware events.
@@ -181,6 +190,11 @@ impl Board {
         lock(&self.time)
     }
 
+    /// Lock the storage/SD-card backend.
+    pub fn storage(&self) -> MutexGuard<'_, Box<dyn StorageBackend>> {
+        lock(&self.storage)
+    }
+
     /// Turns display panel power on or off.
     pub fn set_display_power(&self, on: bool) -> Result<(), crate::error::HalError> {
         self.power().set_display_power(on)
@@ -192,11 +206,12 @@ impl Board {
     }
 
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF
-    /// detection, input debouncing). Call periodically or once per UI frame.
+    /// detection, input debouncing, storage polling). Call periodically or once per UI frame.
     pub fn tick(&self) {
         self.wifi().tick();
         self.audio().tick();
         self.input().tick();
+        self.storage().tick();
 
         #[cfg(not(target_os = "espidf"))]
         {
@@ -218,6 +233,9 @@ impl Board {
             // 3. Check wifi status changes
             let wifi_status = self.wifi().status();
 
+            // 4. Check SD card status changes
+            let sd_status = self.storage().sd_status();
+
             let mut events_to_emit = Vec::new();
             {
                 let mut cache = lock(&self.cache);
@@ -238,6 +256,11 @@ impl Board {
                 if cache.last_wifi_status.as_ref() != Some(&wifi_status) {
                     cache.last_wifi_status = Some(wifi_status.clone());
                     events_to_emit.push(SystemEvent::WifiStatusChanged(wifi_status));
+                }
+
+                if cache.last_sd_status != Some(sd_status) {
+                    cache.last_sd_status = Some(sd_status);
+                    events_to_emit.push(SystemEvent::SdCardChanged(sd_status));
                 }
             }
 

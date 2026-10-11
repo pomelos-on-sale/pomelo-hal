@@ -165,6 +165,65 @@ pub enum InputAction {
     Exit,
 }
 
+/// Current status of the SD / TF card slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SdCardStatus {
+    /// No card is detected in the slot.
+    #[default]
+    NotInserted,
+    /// Physical card detected, but filesystem is unformatted or unsupported (e.g. exFAT).
+    Unformatted,
+    /// Card is inserted and successfully mounted as a filesystem.
+    Mounted,
+    /// Card is present or encountered an error while communicating.
+    Error,
+}
+
+/// Hardware identity and metadata of the SD / TF card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdCardInfo {
+    /// Product model name (e.g. "SL64G" or "SanDisk").
+    pub name: String,
+    /// Physical storage capacity in bytes (from CSD register).
+    pub total_bytes: u64,
+    /// Hardware serial number (from CID register).
+    pub serial_number: u32,
+    /// Whether the filesystem on the card is currently recognized and mounted.
+    pub is_formatted: bool,
+}
+
+/// Storage capacity and usage statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StorageStats {
+    /// Total storage capacity in bytes.
+    pub total_bytes: u64,
+    /// Free storage space in bytes.
+    pub free_bytes: u64,
+}
+
+impl StorageStats {
+    pub const fn new(total_bytes: u64, free_bytes: u64) -> Self {
+        Self {
+            total_bytes,
+            free_bytes,
+        }
+    }
+
+    /// Storage space used in bytes.
+    pub fn used_bytes(&self) -> u64 {
+        self.total_bytes.saturating_sub(self.free_bytes)
+    }
+
+    /// Used percentage in `0.0..=100.0`.
+    pub fn used_percent(&self) -> f32 {
+        if self.total_bytes == 0 {
+            0.0
+        } else {
+            (self.used_bytes() as f64 / self.total_bytes as f64 * 100.0) as f32
+        }
+    }
+}
+
 /// A hardware or system event emitted by the board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemEvent {
@@ -182,6 +241,9 @@ pub enum SystemEvent {
     },
     /// User input action.
     InputAction(InputAction),
+    /// SD card status changed (inserted, mounted, removed, or error).
+    SdCardChanged(SdCardStatus),
 }
+
 
 

@@ -2,7 +2,7 @@
 //!
 //! These run on the host, where the board under test is [`Board::simulated`].
 
-use pomelo_hal::{Board, HalError, ScanState, WifiState};
+use pomelo_hal::{Board, HalError, ScanState, StorageBackend, WifiState};
 
 /// Write a minimal 16-bit mono PCM WAV (0.1 s @ 8 kHz) to a temp file and
 /// return its path, so the audio backend has a real file to parse.
@@ -41,6 +41,10 @@ fn board_constructs_and_exposes_every_subsystem() {
     assert_eq!(board.input().poll_action(), None);
     assert!(board.time().now_unix() > 0);
     assert!(!board.time().is_synced());
+    assert!(matches!(
+        board.storage().sd_status(),
+        pomelo_hal::SdCardStatus::NotInserted | pomelo_hal::SdCardStatus::Mounted
+    ));
     board.input().push_action(pomelo_hal::InputAction::Back);
     assert_eq!(board.input().poll_action(), Some(pomelo_hal::InputAction::Back));
     board.tick();
@@ -304,4 +308,96 @@ fn display_power_and_wake_swallowing() {
         "subsequent action after wake must be dispatched normally"
     );
 }
+
+#[test]
+fn sim_storage_lifecycle_and_stats() {
+    let board = Board::simulated();
+    board.storage().mount_sd().unwrap();
+    assert_eq!(board.storage().sd_status(), pomelo_hal::SdCardStatus::Mounted);
+    let stats = board.storage().sd_stats().unwrap();
+    assert!(stats.total_bytes > 0);
+    assert!(stats.free_bytes <= stats.total_bytes);
+    assert!(stats.used_bytes() <= stats.total_bytes);
+    assert!(stats.used_percent() >= 0.0 && stats.used_percent() <= 100.0);
+
+    board.storage().unmount_sd().unwrap();
+    assert_eq!(board.storage().sd_status(), pomelo_hal::SdCardStatus::NotInserted);
+    assert!(board.storage().sd_stats().is_err());
+}
+
+#[test]
+fn sim_storage_auto_detect_hotplug() {
+    let temp_dir = std::env::temp_dir().join(format!("pomelo_sim_sd_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    use pomelo_hal::sim::SimStorage;
+    let storage = SimStorage::with_path(&temp_dir);
+    assert_eq!(storage.sd_status(), pomelo_hal::SdCardStatus::NotInserted);
+
+    let board = Board::from_backends(
+        Box::new(pomelo_hal::sim::SimPower::new()),
+        Box::new(pomelo_hal::sim::SimWifi::new()),
+        Box::new(pomelo_hal::sim::SimAudio::new()),
+        Box::new(pomelo_hal::sim::SimMic::new()),
+        Box::new(pomelo_hal::sim::SimImu::new()),
+        Box::new(pomelo_hal::sim::SimInput::new()),
+        Box::new(pomelo_hal::sim::SimTime::new()),
+        Box::new(storage),
+    );
+
+    board.tick();
+    assert_eq!(board.storage().sd_status(), pomelo_hal::SdCardStatus::NotInserted);
+
+    // Hot-plug simulation: directory appears
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    board.tick();
+    assert_eq!(board.storage().sd_status(), pomelo_hal::SdCardStatus::Mounted);
+
+    // Pull-out simulation: directory is removed
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    board.tick();
+    assert_eq!(board.storage().sd_status(), pomelo_hal::SdCardStatus::NotInserted);
+}
+
+#[test]
+fn sim_storage_unformatted_and_format_lifecycle() {
+    let temp_dir = std::env::temp_dir().join(format!("pomelo_sim_sd_unfmt_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    std::fs::write(temp_dir.join(".unformatted"), b"dummy").unwrap();
+
+    use pomelo_hal::sim::SimStorage;
+    let storage = SimStorage::with_path(&temp_dir);
+    assert_eq!(storage.sd_status(), pomelo_hal::SdCardStatus::Unformatted);
+
+    let board = Board::from_backends(
+        Box::new(pomelo_hal::sim::SimPower::new()),
+        Box::new(pomelo_hal::sim::SimWifi::new()),
+        Box::new(pomelo_hal::sim::SimAudio::new()),
+        Box::new(pomelo_hal::sim::SimMic::new()),
+        Box::new(pomelo_hal::sim::SimImu::new()),
+        Box::new(pomelo_hal::sim::SimInput::new()),
+        Box::new(pomelo_hal::sim::SimTime::new()),
+        Box::new(storage),
+    );
+
+    let info = board.storage().sd_card_info().expect("info should be available for unformatted card");
+    assert!(!info.is_formatted);
+    assert!(info.total_bytes > 0);
+    assert!(!info.name.is_empty());
+
+    // Formatting on device
+    board.storage().format_sd().unwrap();
+    assert_eq!(board.storage().sd_status(), pomelo_hal::SdCardStatus::Mounted);
+
+    let info2 = board.storage().sd_card_info().expect("info should be available after format");
+    assert!(info2.is_formatted);
+    assert_eq!(info2.total_bytes, info.total_bytes);
+
+    let stats = board.storage().sd_stats().unwrap();
+    assert!(stats.total_bytes > 0);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
 
