@@ -12,8 +12,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::traits::{
-    AudioBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend, TimeBackend,
-    WifiBackend,
+    AudioBackend, HttpBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend,
+    TimeBackend, WifiBackend,
 };
 use crate::types::{SdCardStatus, SystemEvent, WifiStatus};
 
@@ -44,6 +44,7 @@ pub struct Board {
     input: Mutex<Box<dyn InputBackend>>,
     time: Mutex<Box<dyn TimeBackend>>,
     storage: Mutex<Box<dyn StorageBackend>>,
+    http: Mutex<Box<dyn HttpBackend>>,
     listeners: Mutex<Vec<EventListener>>,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
@@ -54,7 +55,7 @@ pub struct Board {
 impl Board {
     /// Assemble a board from one backend per subsystem.
     ///
-    /// The order is `power`, `wifi`, `audio`, `mic`, `imu`, `input`, `time`, `storage` — the same order the accessors
+    /// The order is `power`, `wifi`, `audio`, `mic`, `imu`, `input`, `time`, `storage`, `http` — the same order the accessors
     /// appear in. It takes boxes rather than generics so the caller can mix concrete types
     /// and, in a test, its own fakes.
     pub fn from_backends(
@@ -66,6 +67,7 @@ impl Board {
         input: Box<dyn InputBackend>,
         time: Box<dyn TimeBackend>,
         storage: Box<dyn StorageBackend>,
+        http: Box<dyn HttpBackend>,
     ) -> Self {
         Self {
             power: Mutex::new(power),
@@ -76,6 +78,7 @@ impl Board {
             input: Mutex::new(input),
             time: Mutex::new(time),
             storage: Mutex::new(storage),
+            http: Mutex::new(http),
             listeners: Mutex::new(Vec::new()),
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
@@ -87,7 +90,7 @@ impl Board {
     #[cfg(not(target_os = "espidf"))]
     pub fn simulated() -> Self {
         use crate::sim::{
-            SimAudio, SimImu, SimInput, SimMic, SimPower, SimStorage, SimTime, SimWifi,
+            SimAudio, SimHttp, SimImu, SimInput, SimMic, SimPower, SimStorage, SimTime, SimWifi,
         };
         Self::from_backends(
             Box::new(SimPower::new()),
@@ -98,6 +101,7 @@ impl Board {
             Box::new(SimInput::new()),
             Box::new(SimTime::new()),
             Box::new(SimStorage::new()),
+            Box::new(SimHttp::new()),
         )
     }
 
@@ -195,6 +199,11 @@ impl Board {
         lock(&self.storage)
     }
 
+    /// Lock the HTTP/HTTPS client backend.
+    pub fn http(&self) -> MutexGuard<'_, Box<dyn HttpBackend>> {
+        lock(&self.http)
+    }
+
     /// Turns display panel power on or off.
     pub fn set_display_power(&self, on: bool) -> Result<(), crate::error::HalError> {
         self.power().set_display_power(on)
@@ -206,12 +215,17 @@ impl Board {
     }
 
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF
-    /// detection, input debouncing, storage polling). Call periodically or once per UI frame.
+    /// detection, input debouncing, storage polling, HTTP progress). Call periodically or once per UI frame.
     pub fn tick(&self) {
         self.wifi().tick();
         self.audio().tick();
         self.input().tick();
         self.storage().tick();
+        self.http().tick();
+
+        if let Some(ev) = self.http().poll_event() {
+            self.emit_event(ev);
+        }
 
         #[cfg(not(target_os = "espidf"))]
         {

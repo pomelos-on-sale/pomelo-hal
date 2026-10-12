@@ -243,7 +243,29 @@ pub enum SystemEvent {
     InputAction(InputAction),
     /// SD card status changed (inserted, mounted, removed, or error).
     SdCardChanged(SdCardStatus),
+    /// Asynchronous HTTP request completed (either success or error).
+    HttpFinished {
+        status_code: u16,
+        bytes: usize,
+        error_code: Option<i32>,
+    },
 }
 
-
-
+/// HTTP request / download status reported by [`crate::traits::HttpBackend`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HttpState {
+    /// No request is active or previous result was consumed.
+    #[default]
+    Idle,
+    /// Request is running in background.
+    Running {
+        /// Number of bytes downloaded so far.
+        downloaded: usize,
+        /// Total content length in bytes, if reported by server.
+        total: Option<usize>,
+    },
+    /// Request finished successfully with data ready to take.
+    Done,
+    /// Request failed (network error, TLS failure, HTTP 4xx/5xx, etc.).
+    Error,
+}

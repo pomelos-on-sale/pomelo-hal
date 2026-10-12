@@ -45,6 +45,7 @@ fn board_constructs_and_exposes_every_subsystem() {
         board.storage().sd_status(),
         pomelo_hal::SdCardStatus::NotInserted | pomelo_hal::SdCardStatus::Mounted
     ));
+    assert_eq!(board.http().state(), pomelo_hal::HttpState::Idle);
     board.input().push_action(pomelo_hal::InputAction::Back);
     assert_eq!(board.input().poll_action(), Some(pomelo_hal::InputAction::Back));
     board.tick();
@@ -343,6 +344,7 @@ fn sim_storage_auto_detect_hotplug() {
         Box::new(pomelo_hal::sim::SimInput::new()),
         Box::new(pomelo_hal::sim::SimTime::new()),
         Box::new(storage),
+        Box::new(pomelo_hal::sim::SimHttp::new()),
     );
 
     board.tick();
@@ -379,6 +381,7 @@ fn sim_storage_unformatted_and_format_lifecycle() {
         Box::new(pomelo_hal::sim::SimInput::new()),
         Box::new(pomelo_hal::sim::SimTime::new()),
         Box::new(storage),
+        Box::new(pomelo_hal::sim::SimHttp::new()),
     );
 
     let info = board.storage().sd_card_info().expect("info should be available for unformatted card");
@@ -400,4 +403,28 @@ fn sim_storage_unformatted_and_format_lifecycle() {
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
+#[test]
+fn board_http_lifecycle_and_tick() {
+    let board = Board::simulated();
+    assert_eq!(board.http().state(), pomelo_hal::HttpState::Idle);
 
+    // HTTPS without clock sync returns error
+    assert_eq!(
+        board.http().start("https://pomelo.os/api/version"),
+        Err(HalError::ClockNotSynced)
+    );
+
+    // HTTP works
+    assert!(board.http().start("http://pomelo.os/api/version").is_ok());
+    assert!(matches!(board.http().state(), pomelo_hal::HttpState::Running { .. }));
+
+    // Tick advances state
+    board.tick();
+    board.tick();
+    assert_eq!(board.http().state(), pomelo_hal::HttpState::Done);
+    assert_eq!(board.http().status_code(), Some(200));
+
+    let data = board.http().take_result().unwrap();
+    assert!(!data.is_empty());
+    assert_eq!(board.http().state(), pomelo_hal::HttpState::Idle);
+}

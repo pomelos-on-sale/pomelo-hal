@@ -11,6 +11,7 @@
 //! interface can be read, built and tested without any of the hardware code.
 
 mod audio;
+mod http;
 mod imu;
 mod input;
 mod mic;
@@ -20,6 +21,7 @@ mod time;
 mod wifi;
 
 pub use audio::AudioBackend;
+pub use http::HttpBackend;
 pub use imu::ImuBackend;
 pub use input::InputBackend;
 pub use mic::MicBackend;

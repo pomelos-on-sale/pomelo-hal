@@ -15,6 +15,10 @@ pub enum HalError {
     Timeout,
     /// An argument was invalid (e.g. empty SSID, unknown access point).
     InvalidArg,
+    /// System clock has not been synchronized; HTTPS rejected to avoid certificate validation failure.
+    ClockNotSynced,
+    /// Backend is in an invalid state for this operation (e.g. taking result before completion).
+    InvalidState,
     /// An I/O error, typically from the storage or transport layer.
     Io(String),
     /// A raw platform error code passed through unchanged (e.g. `esp_err_t`).
@@ -40,6 +44,8 @@ impl fmt::Display for HalError {
             HalError::Busy => write!(f, "backend is busy"),
             HalError::Timeout => write!(f, "operation timed out"),
             HalError::InvalidArg => write!(f, "invalid argument"),
+            HalError::ClockNotSynced => write!(f, "system clock is not synchronized with NTP"),
+            HalError::InvalidState => write!(f, "backend is in an invalid state for this operation"),
             HalError::Io(msg) => write!(f, "I/O error: {msg}"),
             HalError::Internal(code) => write!(f, "internal platform error (code {code})"),
         }
