@@ -224,6 +224,24 @@ impl StorageStats {
     }
 }
 
+/// Statistics from an AppData backup or restore operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BackupStats {
+    /// Number of files copied.
+    pub files_count: usize,
+    /// Total bytes copied.
+    pub bytes_count: u64,
+}
+
+impl BackupStats {
+    pub const fn new(files_count: usize, bytes_count: u64) -> Self {
+        Self {
+            files_count,
+            bytes_count,
+        }
+    }
+}
+
 /// A hardware or system event emitted by the board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemEvent {

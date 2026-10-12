@@ -214,6 +214,16 @@ impl Board {
         self.power().is_display_on().unwrap_or(true)
     }
 
+    /// Sets display auto-sleep inactivity timeout. `None` means never sleep.
+    pub fn set_sleep_timeout(&self, timeout: Option<std::time::Duration>) -> Result<(), crate::error::HalError> {
+        self.power().set_sleep_timeout(timeout)
+    }
+
+    /// Inactivity timeout before display automatically sleeps. `None` means never sleep.
+    pub fn sleep_timeout(&self) -> Option<std::time::Duration> {
+        self.power().sleep_timeout().unwrap_or(None)
+    }
+
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF
     /// detection, input debouncing, storage polling, HTTP progress). Call periodically or once per UI frame.
     pub fn tick(&self) {

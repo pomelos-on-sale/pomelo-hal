@@ -428,3 +428,80 @@ fn board_http_lifecycle_and_tick() {
     assert!(!data.is_empty());
     assert_eq!(board.http().state(), pomelo_hal::HttpState::Idle);
 }
+
+#[test]
+fn backup_and_restore_app_data_roundtrip() {
+    use pomelo_hal::backup::{
+        backup_app_data_with_paths, has_backup_with_path, restore_app_data_with_paths,
+    };
+
+    let test_dir = std::env::temp_dir().join(format!("pomelo_backup_test_{}", std::process::id()));
+    let internal_dir = test_dir.join("internal/AppData");
+    let sdcard_backup_dir = test_dir.join("sdcard/Backup/AppData");
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir_all(&internal_dir).unwrap();
+
+    // 1. Create simulated app data
+    let wifi_dir = internal_dir.join("WIFI");
+    std::fs::create_dir_all(&wifi_dir).unwrap();
+    std::fs::write(wifi_dir.join("wifi.conf"), b"ssid=\"HomeNet\"\nenabled=true\n").unwrap();
+
+    let settings_dir = internal_dir.join("SETTINGS");
+    std::fs::create_dir_all(&settings_dir).unwrap();
+    std::fs::write(settings_dir.join("theme.json"), b"{\"dark\": true}").unwrap();
+
+    assert!(!has_backup_with_path(&sdcard_backup_dir));
+
+    // 2. Perform backup
+    let stats = backup_app_data_with_paths(&internal_dir, &sdcard_backup_dir)
+        .expect("backup should succeed");
+    assert_eq!(stats.files_count, 2);
+    assert!(stats.bytes_count > 0);
+    assert!(has_backup_with_path(&sdcard_backup_dir));
+
+    assert_eq!(
+        std::fs::read_to_string(sdcard_backup_dir.join("WIFI/wifi.conf")).unwrap(),
+        "ssid=\"HomeNet\"\nenabled=true\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sdcard_backup_dir.join("SETTINGS/theme.json")).unwrap(),
+        "{\"dark\": true}"
+    );
+
+    // 3. Corrupt or delete internal files
+    std::fs::remove_file(wifi_dir.join("wifi.conf")).unwrap();
+    std::fs::write(settings_dir.join("theme.json"), b"corrupted").unwrap();
+
+    // 4. Perform restore
+    let restore_stats = restore_app_data_with_paths(&sdcard_backup_dir, &internal_dir)
+        .expect("restore should succeed");
+    assert_eq!(restore_stats.files_count, 2);
+
+    // 5. Verify restored state
+    assert_eq!(
+        std::fs::read_to_string(internal_dir.join("WIFI/wifi.conf")).unwrap(),
+        "ssid=\"HomeNet\"\nenabled=true\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(internal_dir.join("SETTINGS/theme.json")).unwrap(),
+        "{\"dark\": true}"
+    );
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn backup_error_handling_for_nonexistent_dirs() {
+    use pomelo_hal::backup::{backup_app_data_with_paths, restore_app_data_with_paths};
+
+    let test_dir = std::env::temp_dir().join(format!("pomelo_backup_err_{}", std::process::id()));
+    let non_existent = test_dir.join("ghost_dir");
+    let target = test_dir.join("target");
+
+    assert!(backup_app_data_with_paths(&non_existent, &target).is_err());
+    assert!(restore_app_data_with_paths(&non_existent, &target).is_err());
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+

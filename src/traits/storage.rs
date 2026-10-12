@@ -32,6 +32,31 @@ pub trait StorageBackend: Send + Sync {
     /// Query storage capacity and usage stats of the mounted SD card.
     fn sd_stats(&self) -> Result<StorageStats, HalError>;
 
+    /// Perform an atomic backup of `/internal/AppData` to the SD card.
+    fn backup_app_data(&mut self) -> Result<crate::types::BackupStats, HalError> {
+        if self.sd_status() != SdCardStatus::Mounted {
+            return Err(HalError::InvalidState);
+        }
+        crate::backup::backup_app_data()
+    }
+
+    /// Perform an atomic restore of `/internal/AppData` from the SD card.
+    fn restore_app_data(&mut self) -> Result<crate::types::BackupStats, HalError> {
+        if self.sd_status() != SdCardStatus::Mounted {
+            return Err(HalError::InvalidState);
+        }
+        crate::backup::restore_app_data()
+    }
+
+    /// Check whether a valid backup directory exists on the SD card.
+    fn has_backup(&self) -> bool {
+        if self.sd_status() != SdCardStatus::Mounted {
+            return false;
+        }
+        crate::backup::has_backup()
+    }
+
     /// Check for hot-plug or state transitions. Called periodically by [`crate::Board::tick`].
     fn tick(&mut self) {}
 }
+

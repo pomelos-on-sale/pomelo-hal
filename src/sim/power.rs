@@ -1,6 +1,6 @@
 //! Simulated battery (AXP2101 PMIC).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::error::HalError;
 use crate::traits::PowerBackend;
@@ -12,6 +12,7 @@ pub struct SimPower {
     secs_per_percent: f32,
     charging: bool,
     display_on: bool,
+    sleep_timeout: Option<Duration>,
 }
 
 impl SimPower {
@@ -22,6 +23,7 @@ impl SimPower {
             secs_per_percent: 45.0,
             charging: true,
             display_on: true,
+            sleep_timeout: None,
         }
     }
 
@@ -62,5 +64,14 @@ impl PowerBackend for SimPower {
 
     fn is_display_on(&self) -> Result<bool, HalError> {
         Ok(self.display_on)
+    }
+
+    fn set_sleep_timeout(&mut self, timeout: Option<Duration>) -> Result<(), HalError> {
+        self.sleep_timeout = timeout;
+        Ok(())
+    }
+
+    fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
+        Ok(self.sleep_timeout)
     }
 }

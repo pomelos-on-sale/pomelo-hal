@@ -23,6 +23,7 @@
 //! On the name: "HAL" here means *board-level services* — the peripherals this board has —
 //! not the register-level HAL that `esp-hal` means. Nothing in here talks to a register.
 
+pub mod backup;
 pub mod board;
 pub mod error;
 pub mod traits;
@@ -34,6 +35,7 @@ pub mod wifi_credentials;
 #[cfg(not(target_os = "espidf"))]
 pub mod sim;
 
+pub use backup::{backup_app_data, has_backup, restore_app_data};
 pub use board::Board;
 pub use error::HalError;
 pub use traits::{
@@ -41,8 +43,8 @@ pub use traits::{
     TimeBackend, WifiBackend,
 };
 pub use types::{
-    ApInfo, AudioMeta, HttpState, InputAction, ScanState, SdCardInfo, SdCardStatus, StorageStats,
-    SystemEvent, Vec3, WifiState, WifiStatus,
+    ApInfo, AudioMeta, BackupStats, HttpState, InputAction, ScanState, SdCardInfo, SdCardStatus,
+    StorageStats, SystemEvent, Vec3, WifiState, WifiStatus,
 };
 pub use wifi_credentials::WifiCredentials;
 

@@ -1,5 +1,7 @@
 //! Power / battery interface.
 
+use std::time::Duration;
+
 use crate::error::HalError;
 
 /// Battery and power-supply management (AXP2101 PMIC on the reference board).
@@ -19,5 +21,13 @@ pub trait PowerBackend: Send + Sync {
     /// Whether the display panel is currently powered on.
     fn is_display_on(&self) -> Result<bool, HalError> {
         Ok(true)
+    }
+    /// Sets display auto-sleep inactivity timeout. `None` means never sleep.
+    fn set_sleep_timeout(&mut self, _timeout: Option<Duration>) -> Result<(), HalError> {
+        Ok(())
+    }
+    /// Inactivity timeout before display automatically sleeps. `None` means never sleep.
+    fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
+        Ok(None)
     }
 }
