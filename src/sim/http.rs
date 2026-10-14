@@ -4,6 +4,13 @@ use crate::error::HalError;
 use crate::traits::HttpBackend;
 use crate::types::{HttpState, SystemEvent};
 
+#[cfg(not(target_os = "espidf"))]
+enum FetchStatus {
+    Running,
+    Done { code: u16, data: Vec<u8> },
+    Error { code: u16 },
+}
+
 /// Desktop simulator HTTP client backend.
 ///
 /// Supports mock responses, error injection, clock synchronization guards,
@@ -18,6 +25,8 @@ pub struct SimHttp {
     mock_responses: HashMap<String, (u16, Vec<u8>)>,
     mock_errors: HashSet<String>,
     pending_event: Option<SystemEvent>,
+    #[cfg(not(target_os = "espidf"))]
+    active_fetch: Option<std::sync::Arc<std::sync::Mutex<FetchStatus>>>,
 }
 
 impl SimHttp {
@@ -32,6 +41,8 @@ impl SimHttp {
             mock_responses: HashMap::new(),
             mock_errors: HashSet::new(),
             pending_event: None,
+            #[cfg(not(target_os = "espidf"))]
+            active_fetch: None,
         }
     }
 
@@ -48,6 +59,47 @@ impl SimHttp {
     /// Register a simulated error for a given URL.
     pub fn set_mock_error(&mut self, url: impl Into<String>) {
         self.mock_errors.insert(url.into());
+    }
+
+    #[cfg(not(target_os = "espidf"))]
+    fn poll_active_fetch(&mut self) {
+        let should_clear = if let Some(ref fetch) = self.active_fetch {
+            if let Ok(st) = fetch.lock() {
+                match &*st {
+                    FetchStatus::Running => false,
+                    FetchStatus::Done { code, data } => {
+                        let len = data.len();
+                        self.state = HttpState::Done;
+                        self.status_code = Some(*code);
+                        self.result = Some(data.clone());
+                        self.pending_event = Some(SystemEvent::HttpFinished {
+                            status_code: *code,
+                            bytes: len,
+                            error_code: None,
+                        });
+                        true
+                    }
+                    FetchStatus::Error { code } => {
+                        self.state = HttpState::Error;
+                        self.status_code = Some(*code);
+                        self.pending_event = Some(SystemEvent::HttpFinished {
+                            status_code: *code,
+                            bytes: 0,
+                            error_code: Some(*code as i32),
+                        });
+                        true
+                    }
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if should_clear {
+            self.active_fetch = None;
+        }
     }
 }
 
@@ -74,44 +126,124 @@ impl HttpBackend for SimHttp {
         self.result = None;
         self.status_code = None;
 
-        if self.mock_errors.contains(url) {
+        let is_mock = self.mock_responses.contains_key(url)
+            || self.mock_errors.contains(url)
+            || url.contains("pomelo.os")
+            || url.contains("example.");
+
+        if is_mock {
+            if self.mock_errors.contains(url) {
+                self.state = HttpState::Running {
+                    downloaded: 0,
+                    total: None,
+                };
+                self.status_code = Some(500);
+                self.pending_payload = None;
+                self.ticks_remaining = 1;
+                return Ok(());
+            }
+
+            let (code, body) = if let Some((code, body)) = self.mock_responses.get(url) {
+                (*code, body.clone())
+            } else {
+                (200, b"Simulated HTTP response payload".to_vec())
+            };
+
+            let total_len = body.len();
+            self.status_code = Some(code);
+            self.pending_payload = Some(body);
+            self.ticks_remaining = 2;
+            self.state = HttpState::Running {
+                downloaded: 0,
+                total: Some(total_len),
+            };
+
+            return Ok(());
+        }
+
+        // Real HTTP request on desktop
+        #[cfg(not(target_os = "espidf"))]
+        {
+            let status = std::sync::Arc::new(std::sync::Mutex::new(FetchStatus::Running));
+            self.active_fetch = Some(std::sync::Arc::clone(&status));
             self.state = HttpState::Running {
                 downloaded: 0,
                 total: None,
             };
-            self.status_code = Some(500);
-            self.pending_payload = None;
-            self.ticks_remaining = 1;
+
+            let target_url = url.to_string();
+            std::thread::Builder::new()
+                .name("sim-http-fetch".into())
+                .spawn(move || {
+                    use std::io::Read;
+                    match ureq::get(&target_url)
+                        .timeout(std::time::Duration::from_secs(10))
+                        .call()
+                    {
+                        Ok(resp) => {
+                            let code = resp.status();
+                            let mut reader = resp.into_reader();
+                            let mut bytes = Vec::new();
+                            if reader.read_to_end(&mut bytes).is_ok() {
+                                if let Ok(mut lock) = status.lock() {
+                                    *lock = FetchStatus::Done { code, data: bytes };
+                                }
+                            } else if let Ok(mut lock) = status.lock() {
+                                *lock = FetchStatus::Error { code: 500 };
+                            }
+                        }
+                        Err(e) => {
+                            let code = match e {
+                                ureq::Error::Status(c, _) => c,
+                                _ => 500,
+                            };
+                            if let Ok(mut lock) = status.lock() {
+                                *lock = FetchStatus::Error { code };
+                            }
+                        }
+                    }
+                })
+                .ok();
+
             return Ok(());
         }
 
-        let (code, body) = if let Some((code, body)) = self.mock_responses.get(url) {
-            (*code, body.clone())
-        } else {
-            (200, b"Simulated HTTP response payload".to_vec())
-        };
-
-        let total_len = body.len();
-        self.status_code = Some(code);
-        self.pending_payload = Some(body);
-        self.ticks_remaining = 2;
-        self.state = HttpState::Running {
-            downloaded: 0,
-            total: Some(total_len),
-        };
-
+        #[cfg(target_os = "espidf")]
         Ok(())
     }
 
     fn state(&self) -> HttpState {
+        #[cfg(not(target_os = "espidf"))]
+        if let Some(ref fetch) = self.active_fetch {
+            if let Ok(st) = fetch.lock() {
+                match &*st {
+                    FetchStatus::Running => return HttpState::Running { downloaded: 0, total: None },
+                    FetchStatus::Done { .. } => return HttpState::Done,
+                    FetchStatus::Error { .. } => return HttpState::Error,
+                }
+            }
+        }
         self.state
     }
 
     fn status_code(&self) -> Option<u16> {
+        #[cfg(not(target_os = "espidf"))]
+        if let Some(ref fetch) = self.active_fetch {
+            if let Ok(st) = fetch.lock() {
+                match &*st {
+                    FetchStatus::Done { code, .. } => return Some(*code),
+                    FetchStatus::Error { code } => return Some(*code),
+                    _ => {}
+                }
+            }
+        }
         self.status_code
     }
 
     fn take_result(&mut self) -> Result<Vec<u8>, HalError> {
+        #[cfg(not(target_os = "espidf"))]
+        self.poll_active_fetch();
+
         if self.state != HttpState::Done {
             return Err(HalError::InvalidState);
         }
@@ -123,6 +255,10 @@ impl HttpBackend for SimHttp {
     }
 
     fn cancel(&mut self) -> Result<(), HalError> {
+        #[cfg(not(target_os = "espidf"))]
+        {
+            self.active_fetch = None;
+        }
         self.state = HttpState::Idle;
         self.status_code = None;
         self.pending_payload = None;
@@ -132,6 +268,9 @@ impl HttpBackend for SimHttp {
     }
 
     fn tick(&mut self) {
+        #[cfg(not(target_os = "espidf"))]
+        self.poll_active_fetch();
+
         if let HttpState::Running { total, .. } = self.state {
             if self.ticks_remaining > 0 {
                 self.ticks_remaining -= 1;
@@ -162,6 +301,10 @@ impl HttpBackend for SimHttp {
                 }
             }
         }
+    }
+
+    fn set_clock_synced(&mut self, synced: bool) {
+        self.clock_synced = synced;
     }
 
     fn poll_event(&mut self) -> Option<SystemEvent> {
@@ -232,5 +375,29 @@ mod tests {
         http.start("http://test.local/fail").unwrap();
         http.tick();
         assert_eq!(http.state(), HttpState::Error);
+    }
+
+    #[test]
+    #[ignore = "requires real internet connection"]
+    fn test_real_outlook_fetch() {
+        let mut http = SimHttp::new();
+        http.set_clock_synced(true);
+        let res = http.start("https://outlook.live.com/owa/calendar/28feeeda-ca56-475f-88c5-c981c672bc26/d7960297-c084-43cc-b45b-e1539fde54fc/cid-59BB3F0030CA8F81/calendar.ics");
+        println!("start result: {:?}", res);
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            println!("state: {:?}", http.state());
+            if http.state() == HttpState::Done {
+                let data = http.take_result().unwrap();
+                println!("GOT DATA LEN: {}", data.len());
+                let ics_str = String::from_utf8_lossy(&data);
+                println!("FIRST 200 BYTES:\n{}", &ics_str[..200.min(ics_str.len())]);
+                return;
+            } else if http.state() == HttpState::Error {
+                println!("GOT ERROR! Code: {:?}", http.status_code());
+                panic!("Fetch returned error!");
+            }
+        }
+        panic!("Timeout!");
     }
 }

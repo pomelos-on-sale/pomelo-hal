@@ -34,6 +34,9 @@ pub trait HttpBackend: Send + Sync {
     /// Advance time-driven simulator/mock state if necessary.
     fn tick(&mut self) {}
 
+    /// Update whether system clock is synchronized (relevant for HTTPS certificates).
+    fn set_clock_synced(&mut self, _synced: bool) {}
+
     /// Poll for an asynchronous hardware or simulator event emitted by this backend, if any.
     fn poll_event(&mut self) -> Option<crate::types::SystemEvent> {
         None
