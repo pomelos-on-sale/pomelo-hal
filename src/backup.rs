@@ -27,19 +27,9 @@ pub const DEFAULT_SDCARD_BACKUP_APP_DATA: &str = "/sdcard/Backup/AppData";
 /// Default stream chunk buffer size (4 KiB) to conserve memory.
 const CHUNK_SIZE: usize = 4096;
 
-/// Resolve the active root for `/internal/AppData` across host simulators and embedded hardware.
+/// Resolve the active root for AppData across host simulators and embedded hardware.
 pub fn resolve_internal_app_data() -> PathBuf {
-    if Path::new("/internal/AppData").exists() {
-        PathBuf::from("/internal/AppData")
-    } else if Path::new("./internal/AppData").exists() {
-        PathBuf::from("./internal/AppData")
-    } else if Path::new("/internal").exists() {
-        PathBuf::from("/internal/AppData")
-    } else if Path::new("./internal").exists() {
-        PathBuf::from("./internal/AppData")
-    } else {
-        PathBuf::from(DEFAULT_INTERNAL_APP_DATA)
-    }
+    crate::storage::resolve_app_data_root()
 }
 
 /// Resolve the active destination for `/sdcard/Backup/AppData`.
@@ -48,8 +38,15 @@ pub fn resolve_sdcard_backup_dir() -> PathBuf {
         PathBuf::from("/sdcard/Backup/AppData")
     } else if Path::new("./sdcard").exists() {
         PathBuf::from("./sdcard/Backup/AppData")
+    } else if crate::storage::is_test_runner() {
+        std::env::temp_dir()
+            .join("pomelo_tests")
+            .join(format!("pid_{}", std::process::id()))
+            .join("sdcard/Backup/AppData")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".pomelo/sdcard/Backup/AppData")
     } else {
-        PathBuf::from(DEFAULT_SDCARD_BACKUP_APP_DATA)
+        std::env::temp_dir().join("pomelo/sdcard/Backup/AppData")
     }
 }
 

@@ -45,7 +45,8 @@ pub struct Board {
     time: Mutex<Box<dyn TimeBackend>>,
     storage: Mutex<Box<dyn StorageBackend>>,
     http: Mutex<Box<dyn HttpBackend>>,
-    listeners: Mutex<Vec<EventListener>>,
+    listeners: Mutex<Vec<(u64, EventListener)>>,
+    next_listener_id: std::sync::atomic::AtomicU64,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
     #[allow(dead_code)]
@@ -80,6 +81,7 @@ impl Board {
             storage: Mutex::new(storage),
             http: Mutex::new(http),
             listeners: Mutex::new(Vec::new()),
+            next_listener_id: std::sync::atomic::AtomicU64::new(1),
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
             cache: Mutex::new(EventStateCache::default()),
@@ -92,6 +94,27 @@ impl Board {
         use crate::sim::{
             SimAudio, SimHttp, SimImu, SimInput, SimMic, SimPower, SimStorage, SimTime, SimWifi,
         };
+
+        let time_shared: Arc<Mutex<dyn TimeBackend>> = Arc::new(Mutex::new(SimTime::new()));
+        let mut http = SimHttp::new();
+        http.set_time_source(Arc::clone(&time_shared));
+
+        struct SharedTime(Arc<Mutex<dyn TimeBackend>>);
+        impl TimeBackend for SharedTime {
+            fn sync(&mut self, server: Option<&str>, timeout: Duration) -> Result<u64, crate::error::HalError> {
+                lock(&self.0).sync(server, timeout)
+            }
+            fn is_synced(&self) -> bool {
+                lock(&self.0).is_synced()
+            }
+            fn now_unix(&self) -> u64 {
+                lock(&self.0).now_unix()
+            }
+            fn is_valid(&self) -> bool {
+                lock(&self.0).is_valid()
+            }
+        }
+
         Self::from_backends(
             Box::new(SimPower::new()),
             Box::new(SimWifi::new()),
@@ -99,9 +122,9 @@ impl Board {
             Box::new(SimMic::new()),
             Box::new(SimImu::new()),
             Box::new(SimInput::new()),
-            Box::new(SimTime::new()),
+            Box::new(SharedTime(time_shared)),
             Box::new(SimStorage::new()),
-            Box::new(SimHttp::new()),
+            Box::new(http),
         )
     }
 
@@ -116,13 +139,30 @@ impl Board {
     }
 
     /// Register an event listener callback for system hardware events.
-    pub fn on_event(&self, listener: impl Fn(&SystemEvent) + Send + Sync + 'static) {
-        lock(&self.listeners).push(Arc::new(listener));
+    /// Returns a unique listener identifier that can be used to unregister it via [`remove_listener`].
+    pub fn on_event(&self, listener: impl Fn(&SystemEvent) + Send + Sync + 'static) -> u64 {
+        let id = self.next_listener_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        lock(&self.listeners).push((id, Arc::new(listener)));
+        id
+    }
+
+    /// Unregisters an event listener by its ID. Returns true if the listener was found and removed.
+    pub fn remove_listener(&self, id: u64) -> bool {
+        let mut listeners = lock(&self.listeners);
+        if let Some(pos) = listeners.iter().position(|(lid, _)| *lid == id) {
+            listeners.swap_remove(pos);
+            true
+        } else {
+            false
+        }
     }
 
     /// Broadcast an event to all registered listeners and queue it for synchronous consumers.
     pub fn emit_event(&self, event: SystemEvent) {
-        let listeners: Vec<EventListener> = lock(&self.listeners).clone();
+        let listeners: Vec<EventListener> = lock(&self.listeners)
+            .iter()
+            .map(|(_, l)| Arc::clone(l))
+            .collect();
         for listener in &listeners {
             listener(&event);
         }

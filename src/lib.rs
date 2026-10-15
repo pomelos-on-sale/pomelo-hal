@@ -26,6 +26,7 @@
 pub mod backup;
 pub mod board;
 pub mod error;
+pub mod storage;
 pub mod traits;
 pub mod types;
 pub mod wav;
@@ -38,9 +39,10 @@ pub mod sim;
 pub use backup::{backup_app_data, has_backup, restore_app_data};
 pub use board::Board;
 pub use error::HalError;
+pub use storage::{atomic_write, atomic_write_text, load_toml, save_toml_atomic, PersistentConfig};
 pub use traits::{
     AudioBackend, HttpBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend,
-    TimeBackend, WifiBackend,
+    TimeBackend, WifiBackend, VALID_TIME_EPOCH_2026,
 };
 pub use types::{
     ApInfo, AudioMeta, BackupStats, HttpState, InputAction, ScanState, SdCardInfo, SdCardStatus,
@@ -52,6 +54,7 @@ pub use wifi_credentials::WifiCredentials;
 pub mod prelude {
     pub use crate::board::Board;
     pub use crate::error::HalError;
+    pub use crate::storage::PersistentConfig;
     pub use crate::traits::{
         AudioBackend, HttpBackend, ImuBackend, InputBackend, MicBackend, PowerBackend,
         StorageBackend, TimeBackend, WifiBackend,
@@ -62,3 +65,4 @@ pub mod prelude {
     };
     pub use crate::wifi_credentials::WifiCredentials;
 }
+

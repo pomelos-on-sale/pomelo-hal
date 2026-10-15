@@ -140,7 +140,7 @@ impl AudioBackend for SimAudio {
     fn play(&mut self, path: &str) -> Result<AudioMeta, HalError> {
         let mut file =
             File::open(path).map_err(|e| HalError::Io(format!("failed to open '{path}': {e}")))?;
-        let mut header_buf = [0u8; 512];
+        let mut header_buf = [0u8; 4096];
         let bytes_read = file
             .read(&mut header_buf)
             .map_err(|e| HalError::Io(e.to_string()))?;

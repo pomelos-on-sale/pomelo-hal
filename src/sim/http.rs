@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::HalError;
-use crate::traits::HttpBackend;
+use crate::traits::{HttpBackend, TimeBackend, VALID_TIME_EPOCH_2026};
 use crate::types::{HttpState, SystemEvent};
 
 #[cfg(not(target_os = "espidf"))]
@@ -21,6 +23,8 @@ pub struct SimHttp {
     pending_payload: Option<Vec<u8>>,
     result: Option<Vec<u8>>,
     clock_synced: bool,
+    mock_now: Option<u64>,
+    time_source: Option<Arc<Mutex<dyn TimeBackend>>>,
     ticks_remaining: usize,
     mock_responses: HashMap<String, (u16, Vec<u8>)>,
     mock_errors: HashSet<String>,
@@ -37,6 +41,8 @@ impl SimHttp {
             pending_payload: None,
             result: None,
             clock_synced: false,
+            mock_now: None,
+            time_source: None,
             ticks_remaining: 0,
             mock_responses: HashMap::new(),
             mock_errors: HashSet::new(),
@@ -49,6 +55,42 @@ impl SimHttp {
     /// Set whether the simulator system clock is synchronized (for HTTPS validation).
     pub fn set_clock_synced(&mut self, synced: bool) {
         self.clock_synced = synced;
+    }
+
+    /// Link this HTTP backend to a shared time source.
+    pub fn set_time_source(&mut self, time: Arc<Mutex<dyn TimeBackend>>) {
+        self.time_source = Some(time);
+    }
+
+    /// Set or clear the mock timestamp for standalone testing.
+    pub fn set_mock_time(&mut self, mock_now: Option<u64>) {
+        self.mock_now = mock_now;
+    }
+
+    /// Returns whether the clock reading is valid (timestamp >= 2026-01-01).
+    pub fn is_valid(&self) -> bool {
+        self.now_unix() >= VALID_TIME_EPOCH_2026
+    }
+
+    /// Returns the current Unix timestamp in seconds.
+    pub fn now_unix(&self) -> u64 {
+        self.mock_now.unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        })
+    }
+
+    /// Returns whether the clock is ready for HTTPS certificate validation:
+    /// `is_synced() || is_valid()`
+    pub fn is_clock_ready(&self) -> bool {
+        if let Some(ref source) = self.time_source {
+            if let Ok(guard) = source.lock() {
+                return guard.is_synced() || guard.is_valid();
+            }
+        }
+        self.clock_synced || self.is_valid()
     }
 
     /// Register a mock response for a given URL.
@@ -115,7 +157,7 @@ impl HttpBackend for SimHttp {
             return Err(HalError::InvalidArg);
         }
 
-        if url.starts_with("https://") && !self.clock_synced {
+        if url.starts_with("https://") && !self.is_clock_ready() {
             return Err(HalError::ClockNotSynced);
         }
 
@@ -319,6 +361,8 @@ mod tests {
     #[test]
     fn sim_http_rejects_https_without_clock_sync() {
         let mut http = SimHttp::new();
+        // With mock cold-boot timestamp (e.g. 1970 epoch) and no sync, HTTPS is rejected
+        http.set_mock_time(Some(0));
         assert_eq!(
             http.start("https://example.com/api"),
             Err(HalError::ClockNotSynced)
@@ -329,11 +373,40 @@ mod tests {
     }
 
     #[test]
-    fn sim_http_accepts_https_when_synced() {
+    fn sim_http_accepts_https_when_valid() {
         let mut http = SimHttp::new();
-        http.set_clock_synced(true);
+        // Host system time on modern systems is >= 2026, so is_valid() is true
+        assert!(http.is_valid());
         assert!(http.start("https://example.com/api").is_ok());
         assert!(matches!(http.state(), HttpState::Running { .. }));
+    }
+
+    #[test]
+    fn sim_http_accepts_https_when_synced() {
+        let mut http = SimHttp::new();
+        http.set_mock_time(Some(0)); // Even when clock is 1970 (is_valid == false)
+        http.set_clock_synced(true); // But is_synced == true
+        assert!(http.start("https://example.com/api").is_ok());
+        assert!(matches!(http.state(), HttpState::Running { .. }));
+    }
+
+    #[test]
+    fn sim_http_time_source_linkage() {
+        use crate::sim::SimTime;
+
+        let time = Arc::new(Mutex::new(SimTime::with_mock_time(0)));
+        let mut http = SimHttp::new();
+        http.set_time_source(Arc::clone(&time) as Arc<Mutex<dyn TimeBackend>>);
+
+        // Time is 0 and unsynced -> HTTPS rejected
+        assert_eq!(
+            http.start("https://example.com/api"),
+            Err(HalError::ClockNotSynced)
+        );
+
+        // Time synced -> HTTPS allowed
+        time.lock().unwrap().sync(None, std::time::Duration::from_millis(10)).unwrap();
+        assert!(http.start("https://example.com/api").is_ok());
     }
 
     #[test]

@@ -171,18 +171,40 @@ impl WifiCredentials {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 
-    /// Writes the file under `root`, making the directories on the way.
+    /// Writes the file under `root` atomically, creating directories as needed.
+    ///
+    /// Uses [`crate::storage::atomic_write_text`] to ensure power-loss atomicity and
+    /// skip writing if the content on Flash is already identical.
     pub fn save(&self, root: impl AsRef<Path>) -> io::Result<()> {
         let path = path(root);
         let text = self
             .to_file()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        crate::storage::atomic_write_text(path, &text)
+    }
+
+    /// Updates only the `enabled` field on the credentials stored under `root`.
+    ///
+    /// If an existing configuration with a network profile exists, its `ssid` and `password`
+    /// are strictly preserved. If no file exists, a default template is stored.
+    pub fn update_enabled(root: impl AsRef<Path>, enabled: bool) -> io::Result<Self> {
+        let mut creds = match Self::load(&root)? {
+            Some(existing) => existing,
+            None => WifiCredentials {
+                enabled,
+                ssid: String::new(),
+                password: String::new(),
+                autoconnect: true,
+            },
+        };
+
+        if creds.enabled != enabled {
+            creds.enabled = enabled;
+            creds.save(&root)?;
         }
 
-        fs::write(path, text)
+        Ok(creds)
     }
 
     /// Removes the file under `root`. Not an error if there was nothing to remove — the caller
@@ -360,6 +382,33 @@ mod tests {
         WifiCredentials::forget(&root).unwrap();
 
         assert_eq!(WifiCredentials::load(&root).unwrap(), None);
+    }
+
+    #[test]
+    fn update_enabled_preserves_ssid_and_password() {
+        let root = temp_root("update_enabled");
+
+        // 1. Initial saved credentials
+        let creds = credentials();
+        creds.save(&root).unwrap();
+
+        // 2. Toggle Wi-Fi OFF
+        let updated = WifiCredentials::update_enabled(&root, false).unwrap();
+        assert!(!updated.enabled);
+        assert_eq!(updated.ssid, creds.ssid, "SSID must be preserved when toggling");
+        assert_eq!(updated.password, creds.password, "Password must be preserved when toggling");
+
+        // 3. Verify on disk
+        let on_disk = WifiCredentials::load(&root).unwrap().unwrap();
+        assert!(!on_disk.enabled);
+        assert_eq!(on_disk.ssid, creds.ssid);
+        assert_eq!(on_disk.password, creds.password);
+
+        // 4. Toggle Wi-Fi back ON
+        let back_on = WifiCredentials::update_enabled(&root, true).unwrap();
+        assert!(back_on.enabled);
+        assert_eq!(back_on.ssid, creds.ssid);
+        assert_eq!(back_on.password, creds.password);
     }
 
     #[test]

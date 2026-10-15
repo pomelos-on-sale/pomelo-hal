@@ -27,5 +27,5 @@ pub use input::InputBackend;
 pub use mic::MicBackend;
 pub use power::PowerBackend;
 pub use storage::StorageBackend;
-pub use time::TimeBackend;
+pub use time::{TimeBackend, VALID_TIME_EPOCH_2026};
 pub use wifi::WifiBackend;

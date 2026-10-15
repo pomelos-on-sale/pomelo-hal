@@ -35,6 +35,10 @@ pub trait HttpBackend: Send + Sync {
     fn tick(&mut self) {}
 
     /// Update whether system clock is synchronized (relevant for HTTPS certificates).
+    #[deprecated(
+        since = "0.1.0",
+        note = "Clock synchronization state is managed by TimeBackend (is_synced and is_valid)"
+    )]
     fn set_clock_synced(&mut self, _synced: bool) {}
 
     /// Poll for an asynchronous hardware or simulator event emitted by this backend, if any.

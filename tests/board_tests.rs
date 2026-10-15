@@ -2,7 +2,8 @@
 //!
 //! These run on the host, where the board under test is [`Board::simulated`].
 
-use pomelo_hal::{Board, HalError, ScanState, StorageBackend, WifiState};
+use std::sync::Arc;
+use pomelo_hal::{Board, HalError, HttpBackend, ScanState, StorageBackend, WifiState};
 
 /// Write a minimal 16-bit mono PCM WAV (0.1 s @ 8 kHz) to a temp file and
 /// return its path, so the audio backend has a real file to parse.
@@ -277,6 +278,11 @@ fn board_event_listener_and_tick_change_detection() {
     // Explicit emit
     board.emit_event(pomelo_hal::SystemEvent::InputAction(pomelo_hal::InputAction::Back));
     assert!(event_count.load(Ordering::SeqCst) >= 3);
+
+    // Test remove_listener
+    let id = board.on_event(|_| {});
+    assert!(board.remove_listener(id));
+    assert!(!board.remove_listener(id));
 }
 
 #[test]
@@ -408,11 +414,24 @@ fn board_http_lifecycle_and_tick() {
     let board = Board::simulated();
     assert_eq!(board.http().state(), pomelo_hal::HttpState::Idle);
 
-    // HTTPS without clock sync returns error
-    assert_eq!(
-        board.http().start("https://pomelo.os/api/version"),
-        Err(HalError::ClockNotSynced)
-    );
+    // Desktop system time is valid (>= 2026), so is_valid() is true and HTTPS works directly
+    assert!(board.time().is_valid());
+    assert!(board.http().start("https://pomelo.os/api/version").is_ok());
+    assert!(matches!(board.http().state(), pomelo_hal::HttpState::Running { .. }));
+    board.http().cancel().unwrap();
+
+    // A cold-boot simulator with clock at epoch 0 and unsynced rejects HTTPS
+    {
+        use pomelo_hal::sim::{SimHttp, SimTime};
+        let cold_time = Arc::new(std::sync::Mutex::new(SimTime::with_mock_time(0)));
+        let mut cold_http = SimHttp::new();
+        cold_http.set_time_source(cold_time as Arc<std::sync::Mutex<dyn pomelo_hal::TimeBackend>>);
+
+        assert_eq!(
+            cold_http.start("https://pomelo.os/api/version"),
+            Err(HalError::ClockNotSynced)
+        );
+    }
 
     // HTTP works
     assert!(board.http().start("http://pomelo.os/api/version").is_ok());
