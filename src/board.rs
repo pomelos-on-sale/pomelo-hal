@@ -46,7 +46,7 @@ pub struct Board {
     storage: Mutex<Box<dyn StorageBackend>>,
     http: Mutex<Box<dyn HttpBackend>>,
     listeners: Mutex<Vec<(u64, EventListener)>>,
-    next_listener_id: std::sync::atomic::AtomicU64,
+    next_listener_id: std::sync::atomic::AtomicUsize,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
     #[allow(dead_code)]
@@ -81,7 +81,7 @@ impl Board {
             storage: Mutex::new(storage),
             http: Mutex::new(http),
             listeners: Mutex::new(Vec::new()),
-            next_listener_id: std::sync::atomic::AtomicU64::new(1),
+            next_listener_id: std::sync::atomic::AtomicUsize::new(1),
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
             cache: Mutex::new(EventStateCache::default()),
@@ -141,7 +141,7 @@ impl Board {
     /// Register an event listener callback for system hardware events.
     /// Returns a unique listener identifier that can be used to unregister it via [`remove_listener`].
     pub fn on_event(&self, listener: impl Fn(&SystemEvent) + Send + Sync + 'static) -> u64 {
-        let id = self.next_listener_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = self.next_listener_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u64;
         lock(&self.listeners).push((id, Arc::new(listener)));
         id
     }
