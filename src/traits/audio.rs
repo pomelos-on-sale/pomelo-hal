@@ -7,6 +7,18 @@ use crate::types::AudioMeta;
 pub trait AudioBackend: Send + Sync {
     /// Start playback of the file at `path`.
     fn play(&mut self, path: &str) -> Result<AudioMeta, HalError>;
+
+    /// Play a pre-decoded raw 16-bit PCM buffer from memory.
+    fn play_pcm(
+        &mut self,
+        _pcm: std::sync::Arc<Vec<u8>>,
+        _sample_rate: u32,
+        _channels: u8,
+        _bits_per_sample: u8,
+    ) -> Result<AudioMeta, HalError> {
+        Err(HalError::NotSupported)
+    }
+
     fn pause(&mut self);
     fn resume(&mut self);
     fn stop(&mut self);

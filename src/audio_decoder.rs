@@ -41,12 +41,27 @@ impl AudioDecoder {
     pub fn from_file(file: File, path_hint: Option<&str>) -> Result<Self, HalError> {
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let ext = path_hint.and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()));
+        Self::from_media_source(mss, file_len, ext)
+    }
 
+    /// Creates a decoder from an in-memory byte buffer (e.g. bundled static assets),
+    /// optionally providing a format extension hint (e.g. "mp3", "wav").
+    pub fn from_bytes(bytes: Vec<u8>, format_hint: Option<&str>) -> Result<Self, HalError> {
+        let file_len = bytes.len() as u64;
+        let cursor = std::io::Cursor::new(bytes);
+        let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+        Self::from_media_source(mss, file_len, format_hint)
+    }
+
+    fn from_media_source(
+        mss: MediaSourceStream,
+        file_len: u64,
+        format_hint: Option<&str>,
+    ) -> Result<Self, HalError> {
         let mut hint = Hint::new();
-        if let Some(p) = path_hint {
-            if let Some(ext) = Path::new(p).extension().and_then(|e| e.to_str()) {
-                hint.with_extension(ext);
-            }
+        if let Some(ext) = format_hint {
+            hint.with_extension(ext);
         }
 
         let probed = symphonia::default::get_probe()
@@ -102,6 +117,14 @@ impl AudioDecoder {
             sample_buf: None,
             sample_offset: 0,
         })
+    }
+
+    /// Decodes the entire audio stream into raw 16-bit interleaved PCM bytes in memory.
+    pub fn decode_all(mut self) -> Result<(AudioMeta, Vec<u8>), HalError> {
+        let mut pcm = Vec::new();
+        self.read_to_end(&mut pcm)
+            .map_err(|e| HalError::Io(format!("audio decode failed: {e}")))?;
+        Ok((self.meta, pcm))
     }
 
     /// Returns the probed metadata of the audio stream.
@@ -252,6 +275,26 @@ mod tests {
                 total_bytes += n;
             }
             assert!(total_bytes > 0, "must decode pcm bytes from wav");
+        }
+    }
+
+    #[test]
+    fn test_from_bytes_and_decode_all() {
+        let candidates = [
+            "../assets/internal/sounds/creatorassets.com/sound-6.mp3",
+            "../../assets/internal/sounds/creatorassets.com/sound-6.mp3",
+            "assets/internal/sounds/creatorassets.com/sound-6.mp3",
+        ];
+        if let Some(path) = candidates.iter().find(|p| Path::new(p).exists()) {
+            let bytes = std::fs::read(path).expect("read sound-6.mp3");
+            let decoder = AudioDecoder::from_bytes(bytes, Some("mp3"))
+                .expect("open from_bytes should succeed");
+            let (meta, pcm) = decoder.decode_all().expect("decode_all should succeed");
+            assert!(meta.sample_rate > 0);
+            assert_eq!(meta.channels, 2);
+            assert_eq!(meta.bits_per_sample, 16);
+            assert!(!pcm.is_empty(), "pcm buffer must not be empty");
+            assert_eq!(pcm.len() % 4, 0, "16-bit 2-ch PCM must be 4-byte aligned");
         }
     }
 }

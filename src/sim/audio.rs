@@ -151,6 +151,36 @@ impl AudioBackend for SimAudio {
         Ok(meta)
     }
 
+    fn play_pcm(
+        &mut self,
+        pcm: std::sync::Arc<Vec<u8>>,
+        sample_rate: u32,
+        channels: u8,
+        bits_per_sample: u8,
+    ) -> Result<AudioMeta, HalError> {
+        let byte_rate = sample_rate * (channels as u32) * ((bits_per_sample as u32) / 8);
+        let duration_secs = if byte_rate > 0 {
+            pcm.len() as f32 / byte_rate as f32
+        } else {
+            0.0
+        };
+
+        let meta = AudioMeta {
+            sample_rate,
+            channels,
+            bits_per_sample,
+            duration_secs,
+        };
+
+        self.duration = duration_secs;
+        self.elapsed_base = 0.0;
+        self.started_at = Some(Instant::now());
+        self.paused = false;
+        self.is_playing = true;
+
+        Ok(meta)
+    }
+
     fn pause(&mut self) {
         if self.is_playing && !self.paused {
             self.elapsed_base = self.elapsed();
