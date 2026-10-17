@@ -23,19 +23,20 @@
 //! On the name: "HAL" here means *board-level services* — the peripherals this board has —
 //! not the register-level HAL that `esp-hal` means. Nothing in here talks to a register.
 
+pub mod audio_decoder;
 pub mod backup;
 pub mod board;
 pub mod error;
 pub mod storage;
 pub mod traits;
 pub mod types;
-pub mod wav;
 pub mod wifi_credentials;
 
 /// Desktop simulator backends, on every platform that is not the device itself.
 #[cfg(not(target_os = "espidf"))]
 pub mod sim;
 
+pub use audio_decoder::{format_time, probe_audio_meta, AudioDecoder};
 pub use backup::{backup_app_data, has_backup, restore_app_data};
 pub use board::Board;
 pub use error::HalError;

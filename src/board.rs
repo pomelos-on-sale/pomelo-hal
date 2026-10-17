@@ -204,6 +204,11 @@ impl Board {
         lock(&self.power)
     }
 
+    /// Reboot the system / device.
+    pub fn reboot(&self) -> Result<(), crate::error::HalError> {
+        self.power().reboot()
+    }
+
     /// Lock the Wi-Fi backend.
     pub fn wifi(&self) -> MutexGuard<'_, Box<dyn WifiBackend>> {
         lock(&self.wifi)

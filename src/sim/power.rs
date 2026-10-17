@@ -74,4 +74,9 @@ impl PowerBackend for SimPower {
     fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(self.sleep_timeout)
     }
+
+    fn reboot(&mut self) -> Result<(), HalError> {
+        eprintln!("[sim_power] system reboot requested");
+        Ok(())
+    }
 }

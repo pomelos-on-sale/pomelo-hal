@@ -6,14 +6,11 @@
 //! parses the WAV header so the returned metadata (and hence the UI progress
 //! bar) matches the real file.
 
-use std::fs::File;
-use std::io::Read;
 use std::time::Instant;
 
 use crate::error::HalError;
 use crate::traits::AudioBackend;
 use crate::types::AudioMeta;
-use crate::wav::parse_wav_header;
 
 #[cfg(feature = "simulator")]
 use std::sync::mpsc::{channel, Sender};
@@ -138,13 +135,7 @@ impl Default for SimAudio {
 
 impl AudioBackend for SimAudio {
     fn play(&mut self, path: &str) -> Result<AudioMeta, HalError> {
-        let mut file =
-            File::open(path).map_err(|e| HalError::Io(format!("failed to open '{path}': {e}")))?;
-        let mut header_buf = [0u8; 4096];
-        let bytes_read = file
-            .read(&mut header_buf)
-            .map_err(|e| HalError::Io(e.to_string()))?;
-        let meta = parse_wav_header(&header_buf[..bytes_read]).map_err(HalError::Io)?;
+        let meta = crate::audio_decoder::probe_audio_meta(path)?;
 
         self.duration = meta.duration_secs;
         self.elapsed_base = 0.0;
@@ -157,12 +148,7 @@ impl AudioBackend for SimAudio {
             volume: self.volume as f32 / 100.0,
         });
 
-        Ok(AudioMeta {
-            sample_rate: meta.sample_rate,
-            channels: meta.channels as u8,
-            bits_per_sample: meta.bits_per_sample as u8,
-            duration_secs: meta.duration_secs,
-        })
+        Ok(meta)
     }
 
     fn pause(&mut self) {

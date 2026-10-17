@@ -30,4 +30,8 @@ pub trait PowerBackend: Send + Sync {
     fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(None)
     }
+    /// Reboots the system / device. Default implementation is a no-op returning `Ok(())`.
+    fn reboot(&mut self) -> Result<(), HalError> {
+        Ok(())
+    }
 }

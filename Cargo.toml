@@ -15,6 +15,7 @@ crate-type = ["rlib"]
 # `wifi_credentials`.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm", "wav"] }
 
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
 # Real desktop playback for the simulator audio backend. Optional so the
