@@ -307,12 +307,20 @@ fn display_power_and_wake_swallowing() {
     assert_eq!(board.poll_event(), None, "wake-up action must be swallowed, not queued");
 
     // Next action while awake should be delivered normally
+    board.input().push_action(pomelo_hal::InputAction::Home);
+    board.tick();
+    assert_eq!(
+        board.poll_event(),
+        Some(pomelo_hal::SystemEvent::InputAction(pomelo_hal::InputAction::Home)),
+        "subsequent Home action after wake must be dispatched normally"
+    );
+
     board.input().push_action(pomelo_hal::InputAction::Back);
     board.tick();
     assert_eq!(
         board.poll_event(),
         Some(pomelo_hal::SystemEvent::InputAction(pomelo_hal::InputAction::Back)),
-        "subsequent action after wake must be dispatched normally"
+        "subsequent Back action after wake must be dispatched normally"
     );
 }
 

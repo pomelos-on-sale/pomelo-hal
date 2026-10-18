@@ -163,6 +163,8 @@ pub enum InputAction {
     Back,
     /// Exit / Kill: terminate the current app and release its memory.
     Exit,
+    /// Home navigation: return to the launcher home screen without killing the active app.
+    Home,
 }
 
 /// Current status of the SD / TF card slot.
