@@ -12,7 +12,10 @@ pub struct SimPower {
     secs_per_percent: f32,
     charging: bool,
     display_on: bool,
+    screen_off_timeout: Option<Duration>,
     sleep_timeout: Option<Duration>,
+    stay_awake_on_usb: bool,
+    usb_connected: bool,
 }
 
 impl SimPower {
@@ -23,7 +26,10 @@ impl SimPower {
             secs_per_percent: 45.0,
             charging: true,
             display_on: true,
+            screen_off_timeout: None,
             sleep_timeout: None,
+            stay_awake_on_usb: true,
+            usb_connected: true,
         }
     }
 
@@ -66,6 +72,15 @@ impl PowerBackend for SimPower {
         Ok(self.display_on)
     }
 
+    fn set_screen_off_timeout(&mut self, timeout: Option<Duration>) -> Result<(), HalError> {
+        self.screen_off_timeout = timeout;
+        Ok(())
+    }
+
+    fn screen_off_timeout(&self) -> Result<Option<Duration>, HalError> {
+        Ok(self.screen_off_timeout)
+    }
+
     fn set_sleep_timeout(&mut self, timeout: Option<Duration>) -> Result<(), HalError> {
         self.sleep_timeout = timeout;
         Ok(())
@@ -75,8 +90,31 @@ impl PowerBackend for SimPower {
         Ok(self.sleep_timeout)
     }
 
+    fn enter_sleep(&mut self, max_duration: Option<Duration>) -> Result<crate::types::WakeupReason, HalError> {
+        if let Some(dur) = max_duration {
+            // Sleep simulator task for requested duration
+            std::thread::sleep(dur.min(Duration::from_millis(50)));
+            Ok(crate::types::WakeupReason::Timer)
+        } else {
+            Ok(crate::types::WakeupReason::None)
+        }
+    }
+
     fn reboot(&mut self) -> Result<(), HalError> {
         eprintln!("[sim_power] system reboot requested");
+        Ok(())
+    }
+
+    fn is_usb_connected(&self) -> Result<bool, HalError> {
+        Ok(self.usb_connected)
+    }
+
+    fn stay_awake_on_usb(&self) -> Result<bool, HalError> {
+        Ok(self.stay_awake_on_usb)
+    }
+
+    fn set_stay_awake_on_usb(&mut self, enable: bool) -> Result<(), HalError> {
+        self.stay_awake_on_usb = enable;
         Ok(())
     }
 }

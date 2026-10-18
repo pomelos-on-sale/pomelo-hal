@@ -267,6 +267,21 @@ pub enum SystemEvent {
         bytes: usize,
         error_code: Option<i32>,
     },
+    /// A scheduled wakeup timer fired.
+    WakeupTriggered {
+        id: String,
+        wake_screen: bool,
+    },
+}
+
+/// The reason why the system woke up from low-power sleep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeupReason {
+    None,
+    Timer,
+    Gpio,
+    Touch,
+    Unknown,
 }
 
 /// HTTP request / download status reported by [`crate::traits::HttpBackend`].

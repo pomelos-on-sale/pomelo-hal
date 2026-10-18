@@ -22,16 +22,41 @@ pub trait PowerBackend: Send + Sync {
     fn is_display_on(&self) -> Result<bool, HalError> {
         Ok(true)
     }
-    /// Sets display auto-sleep inactivity timeout. `None` means never sleep.
+    /// Sets display auto-screen-off inactivity timeout. `None` means never turn off automatically.
+    fn set_screen_off_timeout(&mut self, _timeout: Option<Duration>) -> Result<(), HalError> {
+        Ok(())
+    }
+    /// Inactivity timeout before display automatically turns off. `None` means never turn off.
+    fn screen_off_timeout(&self) -> Result<Option<Duration>, HalError> {
+        Ok(None)
+    }
+    /// Sets system auto-sleep inactivity timeout. `None` means never sleep.
     fn set_sleep_timeout(&mut self, _timeout: Option<Duration>) -> Result<(), HalError> {
         Ok(())
     }
-    /// Inactivity timeout before display automatically sleeps. `None` means never sleep.
+    /// Inactivity timeout before system automatically sleeps. `None` means never sleep.
     fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(None)
     }
+    /// Enters low-power sleep (CPU suspended) for up to `max_duration`.
+    /// Returns the reason for waking up.
+    fn enter_sleep(&mut self, _max_duration: Option<Duration>) -> Result<crate::types::WakeupReason, HalError> {
+        Ok(crate::types::WakeupReason::None)
+    }
     /// Reboots the system / device. Default implementation is a no-op returning `Ok(())`.
     fn reboot(&mut self) -> Result<(), HalError> {
+        Ok(())
+    }
+    /// Whether USB (VBUS) power is currently connected. Default returns `Ok(false)`.
+    fn is_usb_connected(&self) -> Result<bool, HalError> {
+        Ok(false)
+    }
+    /// Whether stay-awake on USB is enabled. Default returns `Ok(true)`.
+    fn stay_awake_on_usb(&self) -> Result<bool, HalError> {
+        Ok(true)
+    }
+    /// Configures whether to stay awake when USB is connected. Default returns `Ok(())`.
+    fn set_stay_awake_on_usb(&mut self, _enable: bool) -> Result<(), HalError> {
         Ok(())
     }
 }

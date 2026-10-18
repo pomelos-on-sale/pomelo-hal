@@ -51,6 +51,7 @@ pub struct Board {
     event_condvar: Condvar,
     #[allow(dead_code)]
     cache: Mutex<EventStateCache>,
+    wakeup: Arc<crate::wakeup::WakeupScheduler>,
 }
 
 impl Board {
@@ -85,6 +86,7 @@ impl Board {
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
             cache: Mutex::new(EventStateCache::default()),
+            wakeup: Arc::new(crate::wakeup::WakeupScheduler::new()),
         }
     }
 
@@ -259,14 +261,49 @@ impl Board {
         self.power().is_display_on().unwrap_or(true)
     }
 
-    /// Sets display auto-sleep inactivity timeout. `None` means never sleep.
+    /// Sets display auto-screen-off inactivity timeout. `None` means never turn off automatically.
+    pub fn set_screen_off_timeout(&self, timeout: Option<std::time::Duration>) -> Result<(), crate::error::HalError> {
+        self.power().set_screen_off_timeout(timeout)
+    }
+
+    /// Inactivity timeout before display automatically turns off. `None` means never turn off.
+    pub fn screen_off_timeout(&self) -> Option<std::time::Duration> {
+        self.power().screen_off_timeout().unwrap_or(None)
+    }
+
+    /// Sets system auto-sleep inactivity timeout. `None` means never sleep.
     pub fn set_sleep_timeout(&self, timeout: Option<std::time::Duration>) -> Result<(), crate::error::HalError> {
         self.power().set_sleep_timeout(timeout)
     }
 
-    /// Inactivity timeout before display automatically sleeps. `None` means never sleep.
+    /// Inactivity timeout before system automatically sleeps. `None` means never sleep.
     pub fn sleep_timeout(&self) -> Option<std::time::Duration> {
         self.power().sleep_timeout().unwrap_or(None)
+    }
+
+    /// Enters low-power sleep (CPU suspended) for up to `max_duration`.
+    pub fn enter_sleep(&self, max_duration: Option<std::time::Duration>) -> Result<crate::types::WakeupReason, crate::error::HalError> {
+        self.power().enter_sleep(max_duration)
+    }
+
+    /// Whether USB (VBUS) power is currently connected.
+    pub fn is_usb_connected(&self) -> bool {
+        self.power().is_usb_connected().unwrap_or(false)
+    }
+
+    /// Whether stay-awake on USB is enabled.
+    pub fn stay_awake_on_usb(&self) -> bool {
+        self.power().stay_awake_on_usb().unwrap_or(true)
+    }
+
+    /// Configures whether to stay awake when USB is connected.
+    pub fn set_stay_awake_on_usb(&self, enable: bool) -> Result<(), crate::error::HalError> {
+        self.power().set_stay_awake_on_usb(enable)
+    }
+
+    /// Access the thread-safe scheduled wakeup manager.
+    pub fn wakeup_scheduler(&self) -> &crate::wakeup::WakeupScheduler {
+        &self.wakeup
     }
 
     /// Advance every time-driven subsystem (Wi-Fi scan progress, audio EOF
@@ -277,6 +314,17 @@ impl Board {
         self.input().tick();
         self.storage().tick();
         self.http().tick();
+
+        // Poll scheduled wakeup timer events
+        for req in self.wakeup.poll_expired() {
+            if req.wake_screen && !self.is_display_on() {
+                let _ = self.set_display_power(true);
+            }
+            self.emit_event(SystemEvent::WakeupTriggered {
+                id: req.id,
+                wake_screen: req.wake_screen,
+            });
+        }
 
         if let Some(ev) = self.http().poll_event() {
             self.emit_event(ev);

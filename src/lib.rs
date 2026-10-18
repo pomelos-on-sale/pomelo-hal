@@ -30,6 +30,7 @@ pub mod error;
 pub mod storage;
 pub mod traits;
 pub mod types;
+pub mod wakeup;
 pub mod wifi_credentials;
 
 /// Desktop simulator backends, on every platform that is not the device itself.
@@ -47,8 +48,9 @@ pub use traits::{
 };
 pub use types::{
     ApInfo, AudioMeta, BackupStats, HttpState, InputAction, ScanState, SdCardInfo, SdCardStatus,
-    StorageStats, SystemEvent, Vec3, WifiState, WifiStatus,
+    StorageStats, SystemEvent, Vec3, WakeupReason, WifiState, WifiStatus,
 };
+pub use wakeup::{WakeupRequest, WakeupScheduler};
 pub use wifi_credentials::WifiCredentials;
 
 /// Convenience import for application crates.
