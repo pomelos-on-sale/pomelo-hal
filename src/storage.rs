@@ -1,14 +1,12 @@
-//! Application configuration and persistent storage infrastructure.
+//! Application configuration and persistent Key-Value storage infrastructure.
 //!
-//! Provides a unified, safe, and robust foundation for all Pomelo OS applications
-//! and system services to persist configurations and data to `/internal/AppData` on
-//! real embedded hardware, or `~/.pomelo/AppData` / `POMELO_APP_DATA` on desktop hosts.
+//! Provides a unified, safe, and robust Key-Value foundation for all Pomelo OS applications
+//! and system services to persist configurations and data to dedicated Flash NVS on real
+//! embedded hardware, or process-isolated mock KV storage on desktop hosts/tests.
 //!
 //! # Core Guarantees
-//! - **Power-Loss Atomicity**: Uses atomic write-and-rename (`.tmp` -> target file).
-//!   A sudden power cutoff will never corrupt or leave a half-written configuration.
-//! - **Flash Wear Mitigation**: Performs content deduplication. If the serialized
-//!   configuration matches what is already on disk, the Flash sector erase/write is skipped.
+//! - **Flash NVS Storage**: Dedicated NVS partition (`nvs_app`) on hardware with wear-leveling.
+//! - **Power-Loss Atomicity**: KV operations are transactional and atomic across boots.
 //! - **Type-Safe Schema**: The [`PersistentConfig`] trait integrates `serde` and `serde_json`,
 //!   providing ergonomic, boilerplate-free `load()` and `save()`.
 
@@ -19,11 +17,8 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// Default internal AppData directory on real embedded hardware (SPIFFS / LittleFS).
-pub const BOARD_APP_DATA: &str = "/internal/AppData";
-
-/// Default desktop AppData directory under user home folder.
-pub const DESKTOP_APP_DATA_DIR: &str = ".pomelo/AppData";
+/// Default desktop mock AppData directory under user home folder.
+const DESKTOP_APP_DATA_DIR: &str = ".pomelo/AppData";
 
 /// Returns whether the current process is running as a test harness binary.
 pub fn is_test_runner() -> bool {
@@ -43,9 +38,8 @@ pub fn is_test_runner() -> bool {
     }
 }
 
-/// Resolves the active root directory for application data across embedded boards,
-/// desktop simulator, and isolated testing environments.
-pub fn resolve_app_data_root() -> PathBuf {
+/// Resolves the active root directory for mock KV storage on desktop/tests.
+pub(crate) fn resolve_app_data_root() -> PathBuf {
     // 1. Environment variable override (crucial for unit tests and multi-instance testing)
     if let Ok(custom) = std::env::var("POMELO_APP_DATA") {
         let trimmed = custom.trim();
@@ -54,12 +48,7 @@ pub fn resolve_app_data_root() -> PathBuf {
         }
     }
 
-    // 2. Embedded hardware partitions or local project internal directories
-    if Path::new("/internal/AppData").exists() || Path::new("/internal").exists() {
-        PathBuf::from("/internal/AppData")
-    } else if Path::new("./internal/AppData").exists() || Path::new("./internal").exists() {
-        PathBuf::from("./internal/AppData")
-    } else if is_test_runner() {
+    if is_test_runner() {
         // In automated tests, use process-isolated temp directory to avoid host pollution
         std::env::temp_dir()
             .join("pomelo_tests")
@@ -72,26 +61,9 @@ pub fn resolve_app_data_root() -> PathBuf {
     }
 }
 
-/// Resolves the storage directory for a specific application or subsystem (e.g. "SETTINGS", "WIFI").
-///
-/// Ensures the directory exists before returning.
-pub fn app_dir(app_id: &str) -> PathBuf {
-    let dir = resolve_app_data_root().join(app_id);
-    let _ = fs::create_dir_all(&dir);
-    dir
-}
-
-/// Resolves the full path to a named file for an application.
-pub fn app_file_path(app_id: &str, file_name: &str) -> PathBuf {
-    app_dir(app_id).join(file_name)
-}
-
 /// Atomically writes bytes to a file by writing to a temporary file first,
 /// flushing to disk, and renaming to the target path.
-///
-/// If `skip_if_unchanged` is true and the target file already exists with identical
-/// bytes, the write is completely skipped to prevent unnecessary Flash wear.
-pub fn atomic_write(target_path: impl AsRef<Path>, data: &[u8], skip_if_unchanged: bool) -> io::Result<()> {
+pub(crate) fn atomic_write(target_path: impl AsRef<Path>, data: &[u8], skip_if_unchanged: bool) -> io::Result<()> {
     let target = target_path.as_ref();
 
     // 1. Flash wear protection: skip write if content is byte-for-byte identical
@@ -134,22 +106,8 @@ pub fn atomic_write(target_path: impl AsRef<Path>, data: &[u8], skip_if_unchange
 }
 
 /// Atomically writes a UTF-8 text string to a target file with wear protection.
-pub fn atomic_write_text(target_path: impl AsRef<Path>, text: &str) -> io::Result<()> {
+pub(crate) fn atomic_write_text(target_path: impl AsRef<Path>, text: &str) -> io::Result<()> {
     atomic_write(target_path, text.as_bytes(), true)
-}
-
-/// Loads and deserializes a JSON file from disk.
-pub fn load_json<T: DeserializeOwned>(path: impl AsRef<Path>) -> io::Result<T> {
-    let content = fs::read(path)?;
-    serde_json::from_slice(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-}
-
-/// Serializes and atomically writes a value to a JSON file.
-pub fn save_json_atomic<T: Serialize>(path: impl AsRef<Path>, value: &T) -> io::Result<()> {
-    let content = serde_json::to_vec_pretty(value)
-        .or_else(|_| serde_json::to_vec(value))
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    atomic_write(path, &content, true)
 }
 
 #[cfg(target_os = "espidf")]
@@ -460,34 +418,15 @@ pub trait PersistentConfig: Serialize + DeserializeOwned + Default {
     /// Must be <= 15 ASCII characters for NVS key compatibility.
     const KEY: &'static str = "config";
 
-    /// File name within the application directory for export or fallback.
-    const FILE_NAME: &'static str = "config.json";
-
-    /// Returns the full path to the configuration file (export/fallback).
-    fn config_path() -> PathBuf {
-        app_file_path(Self::APP_ID, Self::FILE_NAME)
-    }
-
     /// Loads the configuration, falling back to `Default::default()`
     /// if the key does not exist or contains invalid data.
     fn load() -> Self {
         Self::try_load().unwrap_or_default()
     }
 
-    /// Attempts to load the configuration from KV/NVS storage (falling back to file if present).
+    /// Attempts to load the configuration from KV/NVS storage.
     fn try_load() -> io::Result<Self> {
-        match kv_load(Self::APP_ID, Self::KEY) {
-            Ok(val) => Ok(val),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let p = Self::config_path();
-                if p.exists() {
-                    load_json(&p)
-                } else {
-                    Err(e)
-                }
-            }
-            Err(e) => Err(e),
-        }
+        kv_load(Self::APP_ID, Self::KEY)
     }
 
     /// Saves the configuration to KV/NVS storage.
@@ -497,12 +436,7 @@ pub trait PersistentConfig: Serialize + DeserializeOwned + Default {
 
     /// Removes the configuration from KV/NVS storage.
     fn forget() -> io::Result<()> {
-        let _ = kv_delete_raw(Self::APP_ID, Self::KEY);
-        let path = Self::config_path();
-        if path.exists() {
-            let _ = fs::remove_file(path);
-        }
-        Ok(())
+        kv_delete_raw(Self::APP_ID, Self::KEY)
     }
 }
 
@@ -535,13 +469,12 @@ mod tests {
 
     impl PersistentConfig for SampleConfig {
         const APP_ID: &'static str = "SAMPLE_APP";
-        const FILE_NAME: &'static str = "sample.json";
     }
 
     #[test]
     fn persistent_config_lifecycle_load_save_forget() {
         with_test_dir(|_root| {
-            // 1. Missing file returns default
+            // 1. Missing entry returns default
             let initial = SampleConfig::load();
             assert_eq!(initial, SampleConfig::default());
 
@@ -553,11 +486,11 @@ mod tests {
             };
             cfg.save().expect("save should succeed");
 
-            // 3. Reload from disk
+            // 3. Reload from KV
             let loaded = SampleConfig::load();
             assert_eq!(loaded, cfg);
 
-            // 4. Forget file
+            // 4. Forget entry
             SampleConfig::forget().expect("forget should succeed");
             let after_forget = SampleConfig::load();
             assert_eq!(after_forget, SampleConfig::default());
@@ -589,11 +522,9 @@ mod tests {
     }
 
     #[test]
-    fn corrupted_file_falls_back_to_default_gracefully() {
+    fn corrupted_data_falls_back_to_default_gracefully() {
         with_test_dir(|_root| {
-            let path = SampleConfig::config_path();
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, "invalid [[[ json syntax").unwrap();
+            kv_set_raw("SAMPLE_APP", "config", b"invalid [[[ json syntax").unwrap();
 
             assert!(SampleConfig::try_load().is_err());
             assert_eq!(SampleConfig::load(), SampleConfig::default());
