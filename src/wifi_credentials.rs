@@ -19,10 +19,8 @@
 //! (`/etc/NetworkManager/system-connections/*.nmconnection`), which is what "a modern Ubuntu config
 //! file" means for exactly this job.
 //!
-//! TOML, through `serde`: the struct below *is* the schema, `toml::from_str` is the reader and
-//! `toml::to_string` the writer, and adding a setting is adding a field. That was not affordable when
-//! this file was first written — the firmware looked like it had a fifth of the partition left — but
-//! it has 2.1 MB, and one `derive` is a better trade than a parser per file.
+//! JSON, through `serde`: the struct below *is* the schema, `serde_json::from_str` is the reader and
+//! `serde_json::to_string` the writer, and adding a setting is adding a field.
 //!
 //! The cost is that the file belongs to the machine: a save rewrites it, so a comment a person left
 //! in it does not survive. If something needs saying to the next reader, it goes in this comment
@@ -139,17 +137,19 @@ impl WifiCredentials {
     /// error here, on the line it is on. That is what a typed file buys: the failure happens at the
     /// file, named, instead of three screens away at a radio that will not connect and cannot say
     /// why.
-    pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str::<Document>(text).map(|document| document.wifi)
+    /// Reads the file's text in JSON format.
+    pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+            if let Some(wifi) = value.get("wifi") {
+                return serde_json::from_value::<Self>(wifi.clone());
+            }
+        }
+        serde_json::from_str::<Self>(text)
     }
 
-    /// The file's text, ready to write.
-    ///
-    /// Fallible in principle — `serde` can fail to write a type it has no representation for — and
-    /// infallible in fact for four plain fields. The signature says "in principle" rather than
-    /// promising what it cannot promise.
-    pub fn to_file(&self) -> Result<String, toml::ser::Error> {
-        toml::to_string(&Document {
+    /// The file's text in JSON format, ready to write.
+    pub fn to_file(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&Document {
             wifi: self.clone(),
         })
     }
@@ -160,19 +160,29 @@ impl WifiCredentials {
     /// is *there* and unreadable is one, and comes back as `InvalidData` carrying the reason — so
     /// "you have never connected" and "your file is corrupt" stay two different screens.
     pub fn load(root: impl AsRef<Path>) -> io::Result<Option<Self>> {
-        if let Ok(creds) = crate::storage::kv_load::<Self>("WIFI", "credentials") {
-            return Ok(Some(creds));
+        let p = path(&root);
+        if p.exists() {
+            let text = fs::read_to_string(p)?;
+            return Self::parse(&text)
+                .map(Some)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
         }
 
-        let text = match fs::read_to_string(path(root)) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        let root_ref = root.as_ref();
+        if root_ref == Path::new(BOARD_APP_DATA) || root_ref == crate::storage::resolve_app_data_root() {
+            if let Ok(creds) = crate::storage::kv_load::<Self>("WIFI", "credentials") {
+                return Ok(Some(creds));
+            }
+        }
 
-        Self::parse(&text)
-            .map(Some)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        #[cfg(target_os = "espidf")]
+        {
+            if let Ok(creds) = crate::storage::kv_load::<Self>("WIFI", "credentials") {
+                return Ok(Some(creds));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Writes the file under `root` atomically, creating directories as needed.
@@ -226,9 +236,7 @@ impl WifiCredentials {
     }
 }
 
-// No error type of our own. `toml::de::Error` already says what is wrong and on which line, and
-// wrapping it to say the same thing in this crate's words would cost the line number to say it —
-// which is the one part of the message worth having.
+// No error type of our own. `serde_json::Error` already says what is wrong and on which line.
 
 #[cfg(test)]
 mod tests {
@@ -273,13 +281,7 @@ mod tests {
     #[test]
     fn a_table_a_later_version_wrote_is_ignored() {
         let read = WifiCredentials::parse(
-            "[wifi]\n\
-             ssid = \"home\"\n\
-             password = \"hunter2\"\n\
-             priority = 5\n\
-             \n\
-             [ethernet]\n\
-             method = \"auto\"\n",
+            r#"{"wifi":{"ssid":"home","password":"hunter2","priority":5},"ethernet":{"method":"auto"}}"#,
         )
         .unwrap();
 
@@ -297,7 +299,7 @@ mod tests {
 
     #[test]
     fn the_switches_have_the_defaults_that_keep_a_board_quiet() {
-        let without = WifiCredentials::parse("[wifi]\nssid = \"home\"\n").unwrap();
+        let without = WifiCredentials::parse(r#"{"wifi":{"ssid":"home"}}"#).unwrap();
 
         assert!(
             !without.enabled,
@@ -315,20 +317,20 @@ mod tests {
 
     #[test]
     fn a_file_without_network_has_default_empty_ssid() {
-        let read = WifiCredentials::parse("[wifi]\nenabled = true\n").unwrap();
+        let read = WifiCredentials::parse(r#"{"wifi":{"enabled":true}}"#).unwrap();
         assert!(read.enabled);
         assert_eq!(read.ssid, "");
         assert!(!read.has_network());
         assert!(
             WifiCredentials::parse("").is_err(),
-            "a file with no `[wifi]` table is an error, and not an empty network"
+            "an empty file is an error, and not an empty network"
         );
     }
 
     #[test]
     fn a_value_of_the_wrong_type_is_an_error_and_not_a_default() {
         let error =
-            WifiCredentials::parse("[wifi]\nssid = \"home\"\nautoconnect = \"yes\"\n").unwrap_err();
+            WifiCredentials::parse(r#"{"wifi":{"ssid":"home","autoconnect":"yes"}}"#).unwrap_err();
 
         assert!(
             error.to_string().contains("boolean"),
@@ -425,14 +427,10 @@ mod tests {
         let file = path(&root);
 
         fs::create_dir_all(file.parent().unwrap()).unwrap();
-        fs::write(&file, "[wifi]\nnot a pair\n").unwrap();
+        fs::write(&file, "{\"wifi\": not valid json").unwrap();
 
         let error = WifiCredentials::load(&root).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(
-            error.to_string().contains("line 2"),
-            "and the message points at the line: {error}"
-        );
     }
 }

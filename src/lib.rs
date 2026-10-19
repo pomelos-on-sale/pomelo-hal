@@ -41,7 +41,7 @@ pub use audio_decoder::{format_time, probe_audio_meta, AudioDecoder};
 pub use backup::{backup_app_data, has_backup, restore_app_data};
 pub use board::Board;
 pub use error::HalError;
-pub use storage::{atomic_write, atomic_write_text, load_toml, save_toml_atomic, PersistentConfig};
+pub use storage::{atomic_write, atomic_write_text, load_json, save_json_atomic, PersistentConfig};
 pub use traits::{
     AudioBackend, HttpBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend,
     TimeBackend, WifiBackend, VALID_TIME_EPOCH_2026,

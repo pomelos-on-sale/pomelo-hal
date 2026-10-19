@@ -9,7 +9,7 @@
 //!   A sudden power cutoff will never corrupt or leave a half-written configuration.
 //! - **Flash Wear Mitigation**: Performs content deduplication. If the serialized
 //!   configuration matches what is already on disk, the Flash sector erase/write is skipped.
-//! - **Type-Safe Schema**: The [`PersistentConfig`] trait integrates `serde` and `toml`,
+//! - **Type-Safe Schema**: The [`PersistentConfig`] trait integrates `serde` and `serde_json`,
 //!   providing ergonomic, boilerplate-free `load()` and `save()`.
 
 use std::fs::{self, File};
@@ -138,18 +138,18 @@ pub fn atomic_write_text(target_path: impl AsRef<Path>, text: &str) -> io::Resul
     atomic_write(target_path, text.as_bytes(), true)
 }
 
-/// Loads and deserializes a TOML file from disk.
-pub fn load_toml<T: DeserializeOwned>(path: impl AsRef<Path>) -> io::Result<T> {
-    let content = fs::read_to_string(path)?;
-    toml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+/// Loads and deserializes a JSON file from disk.
+pub fn load_json<T: DeserializeOwned>(path: impl AsRef<Path>) -> io::Result<T> {
+    let content = fs::read(path)?;
+    serde_json::from_slice(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// Serializes and atomically writes a value to a TOML file.
-pub fn save_toml_atomic<T: Serialize>(path: impl AsRef<Path>, value: &T) -> io::Result<()> {
-    let content = toml::to_string_pretty(value)
-        .or_else(|_| toml::to_string(value))
+/// Serializes and atomically writes a value to a JSON file.
+pub fn save_json_atomic<T: Serialize>(path: impl AsRef<Path>, value: &T) -> io::Result<()> {
+    let content = serde_json::to_vec_pretty(value)
+        .or_else(|_| serde_json::to_vec(value))
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    atomic_write_text(path, &content)
+    atomic_write(path, &content, true)
 }
 
 #[cfg(target_os = "espidf")]
@@ -242,12 +242,7 @@ pub fn kv_get_raw(namespace: &str, key: &str) -> io::Result<Option<Vec<u8>>> {
         if p.exists() {
             fs::read(&p).map(Some)
         } else {
-            let legacy_toml = app_dir(namespace).join("config.toml");
-            if legacy_toml.exists() {
-                fs::read(&legacy_toml).map(Some)
-            } else {
-                Ok(None)
-            }
+            Ok(None)
         }
     }
 }
@@ -315,10 +310,6 @@ pub fn kv_delete_raw(namespace: &str, key: &str) -> io::Result<()> {
         if p.exists() {
             let _ = fs::remove_file(&p);
         }
-        let legacy_toml = app_dir(namespace).join("config.toml");
-        if legacy_toml.exists() {
-            let _ = fs::remove_file(&legacy_toml);
-        }
         Ok(())
     }
 }
@@ -343,20 +334,12 @@ pub fn kv_load<T: DeserializeOwned>(namespace: &str, key: &str) -> io::Result<T>
         }
     };
 
-    // Try JSON first
-    if let Ok(val) = serde_json::from_slice::<T>(&bytes) {
-        return Ok(val);
-    }
-    // Fallback to TOML (if legacy file content was TOML)
-    if let Ok(s) = std::str::from_utf8(&bytes) {
-        if let Ok(val) = toml::from_str::<T>(s) {
-            return Ok(val);
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "deserialization failed",
-    ))
+    serde_json::from_slice::<T>(&bytes).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deserialization failed for {namespace}/{key}: {e}"),
+        )
+    })
 }
 
 /// Serializes and saves a typed configuration to KV storage.
@@ -435,6 +418,7 @@ pub fn kv_dump_all() -> io::Result<std::collections::BTreeMap<String, std::colle
         ("WIFI", "credentials"),
         ("ALARM_CLOCK", "config"),
         ("DAILY_SCHEDULE", "config"),
+        ("DAILY_SCHEDULE", "today_cache"),
         ("DAILY_SCHED", "config"),
         ("SYSTEM", "env"),
     ];
@@ -476,10 +460,10 @@ pub trait PersistentConfig: Serialize + DeserializeOwned + Default {
     /// Must be <= 15 ASCII characters for NVS key compatibility.
     const KEY: &'static str = "config";
 
-    /// File name within the application directory for legacy fallback or export.
-    const FILE_NAME: &'static str = "config.toml";
+    /// File name within the application directory for export or fallback.
+    const FILE_NAME: &'static str = "config.json";
 
-    /// Returns the full path to the configuration file (legacy/export).
+    /// Returns the full path to the configuration file (export/fallback).
     fn config_path() -> PathBuf {
         app_file_path(Self::APP_ID, Self::FILE_NAME)
     }
@@ -497,7 +481,7 @@ pub trait PersistentConfig: Serialize + DeserializeOwned + Default {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 let p = Self::config_path();
                 if p.exists() {
-                    load_toml(&p)
+                    load_json(&p)
                 } else {
                     Err(e)
                 }
@@ -551,7 +535,7 @@ mod tests {
 
     impl PersistentConfig for SampleConfig {
         const APP_ID: &'static str = "SAMPLE_APP";
-        const FILE_NAME: &'static str = "sample.toml";
+        const FILE_NAME: &'static str = "sample.json";
     }
 
     #[test]
@@ -609,7 +593,7 @@ mod tests {
         with_test_dir(|_root| {
             let path = SampleConfig::config_path();
             fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, "invalid [[[ toml syntax").unwrap();
+            fs::write(&path, "invalid [[[ json syntax").unwrap();
 
             assert!(SampleConfig::try_load().is_err());
             assert_eq!(SampleConfig::load(), SampleConfig::default());
