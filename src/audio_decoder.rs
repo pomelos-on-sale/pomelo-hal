@@ -232,9 +232,9 @@ mod tests {
     #[test]
     fn test_decode_and_probe_mp3_and_wav() {
         let candidates = [
-            "../assets/internal/sounds/creatorassets.com/sound-1.mp3",
-            "../../assets/internal/sounds/creatorassets.com/sound-1.mp3",
-            "assets/internal/sounds/creatorassets.com/sound-1.mp3",
+            "../assets/sounds/creatorassets.com/sound-1.mp3",
+            "../../assets/sounds/creatorassets.com/sound-1.mp3",
+            "assets/sounds/creatorassets.com/sound-1.mp3",
         ];
         let mp3_path = candidates.iter().find(|p| Path::new(p).exists());
         if let Some(path) = mp3_path {
@@ -286,9 +286,9 @@ mod tests {
     #[test]
     fn test_from_bytes_and_decode_all() {
         let candidates = [
-            "../assets/internal/sounds/creatorassets.com/sound-6.mp3",
-            "../../assets/internal/sounds/creatorassets.com/sound-6.mp3",
-            "assets/internal/sounds/creatorassets.com/sound-6.mp3",
+            "../assets/sounds/creatorassets.com/sound-6.mp3",
+            "../../assets/sounds/creatorassets.com/sound-6.mp3",
+            "assets/sounds/creatorassets.com/sound-6.mp3",
         ];
         if let Some(path) = candidates.iter().find(|p| Path::new(p).exists()) {
             let bytes = std::fs::read(path).expect("read sound-6.mp3");
