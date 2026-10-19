@@ -30,19 +30,6 @@ pub trait PowerBackend: Send + Sync {
     fn screen_off_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(None)
     }
-    /// Sets system auto-sleep inactivity timeout. `None` means never sleep.
-    fn set_sleep_timeout(&mut self, _timeout: Option<Duration>) -> Result<(), HalError> {
-        Ok(())
-    }
-    /// Inactivity timeout before system automatically sleeps. `None` means never sleep.
-    fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
-        Ok(None)
-    }
-    /// Enters low-power sleep (CPU suspended) for up to `max_duration`.
-    /// Returns the reason for waking up.
-    fn enter_sleep(&mut self, _max_duration: Option<Duration>) -> Result<crate::types::WakeupReason, HalError> {
-        Ok(crate::types::WakeupReason::None)
-    }
     /// Reboots the system / device. Default implementation is a no-op returning `Ok(())`.
     fn reboot(&mut self) -> Result<(), HalError> {
         Ok(())

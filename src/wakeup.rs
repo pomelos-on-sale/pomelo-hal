@@ -15,13 +15,29 @@ pub struct WakeupRequest {
     pub wake_screen: bool,
 }
 
+pub type WakeupChangeListener = Box<dyn Fn(Option<SystemTime>) + Send + Sync>;
+
 /// Thread-safe wakeup scheduler.
 ///
 /// Any application, subsystem, or background task can schedule a future wake-up
 /// when the system is in low-power Sleep mode.
-#[derive(Debug, Default)]
 pub struct WakeupScheduler {
     requests: Mutex<BTreeMap<String, WakeupRequest>>,
+    listener: Mutex<Option<WakeupChangeListener>>,
+}
+
+impl std::fmt::Debug for WakeupScheduler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WakeupScheduler")
+            .field("requests", &self.requests)
+            .finish()
+    }
+}
+
+impl Default for WakeupScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WakeupScheduler {
@@ -29,6 +45,30 @@ impl WakeupScheduler {
     pub fn new() -> Self {
         Self {
             requests: Mutex::new(BTreeMap::new()),
+            listener: Mutex::new(None),
+        }
+    }
+
+    /// Registers a listener callback invoked whenever the nearest scheduled wakeup time changes.
+    pub fn set_change_listener<F>(&self, listener: F)
+    where
+        F: Fn(Option<SystemTime>) + Send + Sync + 'static,
+    {
+        let mut l = self.listener.lock().unwrap();
+        *l = Some(Box::new(listener));
+        let reqs = self.requests.lock().unwrap();
+        let next_at = reqs.values().min_by_key(|req| req.at).map(|r| r.at);
+        if let Some(cb) = l.as_ref() {
+            cb(next_at);
+        }
+    }
+
+    fn notify_change(&self, reqs: &BTreeMap<String, WakeupRequest>) {
+        if let Ok(l) = self.listener.lock() {
+            if let Some(cb) = l.as_ref() {
+                let next_at = reqs.values().min_by_key(|req| req.at).map(|r| r.at);
+                cb(next_at);
+            }
         }
     }
 
@@ -46,6 +86,7 @@ impl WakeupScheduler {
                 wake_screen,
             },
         );
+        self.notify_change(&reqs);
     }
 
     /// Schedules a wakeup request after a given `Duration` from now.
@@ -57,12 +98,19 @@ impl WakeupScheduler {
     /// Cancels a scheduled wakeup by its `id`.
     /// Returns `true` if a request was found and cancelled.
     pub fn cancel(&self, id: &str) -> bool {
-        self.requests.lock().unwrap().remove(id).is_some()
+        let mut reqs = self.requests.lock().unwrap();
+        let removed = reqs.remove(id).is_some();
+        if removed {
+            self.notify_change(&reqs);
+        }
+        removed
     }
 
     /// Clears all scheduled wakeup requests.
     pub fn clear(&self) {
-        self.requests.lock().unwrap().clear();
+        let mut reqs = self.requests.lock().unwrap();
+        reqs.clear();
+        self.notify_change(&reqs);
     }
 
     /// Returns the nearest upcoming wakeup request, if any.
@@ -96,8 +144,12 @@ impl WakeupScheduler {
             }
         }
 
-        for key in keys_to_remove {
-            reqs.remove(&key);
+        for key in &keys_to_remove {
+            reqs.remove(key);
+        }
+
+        if !expired.is_empty() {
+            self.notify_change(&reqs);
         }
 
         expired
@@ -136,5 +188,36 @@ mod tests {
         assert_eq!(scheduler.all_requests().len(), 1);
         assert!(scheduler.cancel("future_task"));
         assert_eq!(scheduler.all_requests().len(), 0);
+    }
+
+    #[test]
+    fn test_wakeup_change_listener() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let scheduler = WakeupScheduler::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let last_had_wakeup = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let calls_clone = Arc::clone(&calls);
+        let flag_clone = Arc::clone(&last_had_wakeup);
+        scheduler.set_change_listener(move |next_at| {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            flag_clone.store(next_at.is_some(), Ordering::SeqCst);
+        });
+
+        // 1. Initial call upon registration (None)
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!last_had_wakeup.load(Ordering::SeqCst));
+
+        // 2. Schedule a future task
+        scheduler.schedule("t1", SystemTime::now() + Duration::from_secs(10), true);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(last_had_wakeup.load(Ordering::SeqCst));
+
+        // 3. Cancel task
+        scheduler.cancel("t1");
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(!last_had_wakeup.load(Ordering::SeqCst));
     }
 }

@@ -8,6 +8,11 @@ pub trait AudioBackend: Send + Sync {
     /// Start playback of the file at `path`.
     fn play(&mut self, path: &str) -> Result<AudioMeta, HalError>;
 
+    /// Start playback of the file at `path`, looping continuously until explicitly stopped.
+    fn play_loop(&mut self, path: &str) -> Result<AudioMeta, HalError> {
+        self.play(path)
+    }
+
     /// Play a pre-decoded raw 16-bit PCM buffer from memory.
     fn play_pcm(
         &mut self,

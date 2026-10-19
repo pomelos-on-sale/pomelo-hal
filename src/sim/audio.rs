@@ -31,6 +31,7 @@ pub struct SimAudio {
     tx: Option<Sender<SimAudioCommand>>,
     is_playing: bool,
     paused: bool,
+    is_looping: bool,
     volume: u8,
     elapsed_base: f32,
     started_at: Option<Instant>,
@@ -101,6 +102,7 @@ impl SimAudio {
             tx,
             is_playing: false,
             paused: false,
+            is_looping: false,
             volume: 75,
             elapsed_base: 0.0,
             started_at: None,
@@ -142,12 +144,19 @@ impl AudioBackend for SimAudio {
         self.started_at = Some(Instant::now());
         self.paused = false;
         self.is_playing = true;
+        self.is_looping = false;
 
         self.send(SimAudioCommand::Play {
             path: path.to_string(),
             volume: self.volume as f32 / 100.0,
         });
 
+        Ok(meta)
+    }
+
+    fn play_loop(&mut self, path: &str) -> Result<AudioMeta, HalError> {
+        let meta = self.play(path)?;
+        self.is_looping = true;
         Ok(meta)
     }
 
@@ -201,6 +210,7 @@ impl AudioBackend for SimAudio {
     fn stop(&mut self) {
         self.is_playing = false;
         self.paused = false;
+        self.is_looping = false;
         self.elapsed_base = 0.0;
         self.started_at = None;
         self.send(SimAudioCommand::Stop);
@@ -221,7 +231,12 @@ impl AudioBackend for SimAudio {
 
     fn tick(&mut self) {
         if self.is_playing() && self.duration > 0.0 && self.position_secs() >= self.duration {
-            self.stop();
+            if self.is_looping {
+                self.elapsed_base = 0.0;
+                self.started_at = Some(Instant::now());
+            } else {
+                self.stop();
+            }
         }
     }
 }

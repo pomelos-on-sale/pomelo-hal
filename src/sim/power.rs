@@ -13,7 +13,6 @@ pub struct SimPower {
     charging: bool,
     display_on: bool,
     screen_off_timeout: Option<Duration>,
-    sleep_timeout: Option<Duration>,
     stay_awake_on_usb: bool,
     usb_connected: bool,
 }
@@ -27,7 +26,6 @@ impl SimPower {
             charging: true,
             display_on: true,
             screen_off_timeout: None,
-            sleep_timeout: None,
             stay_awake_on_usb: true,
             usb_connected: true,
         }
@@ -79,25 +77,6 @@ impl PowerBackend for SimPower {
 
     fn screen_off_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(self.screen_off_timeout)
-    }
-
-    fn set_sleep_timeout(&mut self, timeout: Option<Duration>) -> Result<(), HalError> {
-        self.sleep_timeout = timeout;
-        Ok(())
-    }
-
-    fn sleep_timeout(&self) -> Result<Option<Duration>, HalError> {
-        Ok(self.sleep_timeout)
-    }
-
-    fn enter_sleep(&mut self, max_duration: Option<Duration>) -> Result<crate::types::WakeupReason, HalError> {
-        if let Some(dur) = max_duration {
-            // Sleep simulator task for requested duration
-            std::thread::sleep(dur.min(Duration::from_millis(50)));
-            Ok(crate::types::WakeupReason::Timer)
-        } else {
-            Ok(crate::types::WakeupReason::None)
-        }
     }
 
     fn reboot(&mut self) -> Result<(), HalError> {

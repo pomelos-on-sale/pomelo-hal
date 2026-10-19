@@ -271,21 +271,6 @@ impl Board {
         self.power().screen_off_timeout().unwrap_or(None)
     }
 
-    /// Sets system auto-sleep inactivity timeout. `None` means never sleep.
-    pub fn set_sleep_timeout(&self, timeout: Option<std::time::Duration>) -> Result<(), crate::error::HalError> {
-        self.power().set_sleep_timeout(timeout)
-    }
-
-    /// Inactivity timeout before system automatically sleeps. `None` means never sleep.
-    pub fn sleep_timeout(&self) -> Option<std::time::Duration> {
-        self.power().sleep_timeout().unwrap_or(None)
-    }
-
-    /// Enters low-power sleep (CPU suspended) for up to `max_duration`.
-    pub fn enter_sleep(&self, max_duration: Option<std::time::Duration>) -> Result<crate::types::WakeupReason, crate::error::HalError> {
-        self.power().enter_sleep(max_duration)
-    }
-
     /// Whether USB (VBUS) power is currently connected.
     pub fn is_usb_connected(&self) -> bool {
         self.power().is_usb_connected().unwrap_or(false)
