@@ -24,6 +24,24 @@ pub trait AudioBackend: Send + Sync {
         Err(HalError::NotSupported)
     }
 
+    /// Play compressed audio bytes (e.g. embedded static MP3/WAV asset) from memory.
+    fn play_bytes(
+        &mut self,
+        _bytes: &'static [u8],
+        _format_hint: Option<&str>,
+    ) -> Result<AudioMeta, HalError> {
+        Err(HalError::NotSupported)
+    }
+
+    /// Play compressed audio bytes from memory in a continuous loop.
+    fn play_bytes_loop(
+        &mut self,
+        _bytes: &'static [u8],
+        _format_hint: Option<&str>,
+    ) -> Result<AudioMeta, HalError> {
+        Err(HalError::NotSupported)
+    }
+
     fn pause(&mut self);
     fn resume(&mut self);
     fn stop(&mut self);

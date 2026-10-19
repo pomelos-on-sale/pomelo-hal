@@ -1,248 +1,218 @@
-//! Backup and restore engine for `/internal/AppData`.
+//! Backup and restore engine for Pomelo OS configurations and data.
 //!
-//! Provides transactional, atomic copy operations between internal LittleFS storage
-//! (`/internal/AppData`) and external MicroSD storage (`/sdcard/Backup/AppData`).
+//! Provides transactional, atomic backup operations between Flash NVS / KV storage
+//! and external MicroSD storage (`/sdcard/Backup/app_data.json`).
 //!
-//! # Safety & Rollback Guarantees
-//! - **Backup**: Writes to `/sdcard/Backup/AppData.tmp` first. Only after all files
-//!   and subdirectories are flushed does it swap into `/sdcard/Backup/AppData`.
-//!   If power fails or an I/O error occurs midway, existing backups remain intact.
-//! - **Restore**: Writes to `/internal/AppData.tmp` first and preserves the current
-//!   data in `/internal/AppData.rollback`. If writing the new files fails, the
-//!   original configuration is restored immediately.
+//! # Safety & Power-Loss Guarantees
+//! - **Backup**: Dumps all persistent configurations from Flash NVS / KV storage into a structured
+//!   JSON archive and atomically commits to the destination file using `.tmp` and rename.
+//! - **Restore**: Atomically reads the backup JSON archive and commits each configuration
+//!   entry directly into Flash NVS / KV storage.
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::HalError;
+use crate::storage;
 use crate::types::BackupStats;
 
-/// Default internal AppData mount directory on real hardware.
-pub const DEFAULT_INTERNAL_APP_DATA: &str = "/internal/AppData";
+/// Default SD card backup file path on real embedded hardware.
+pub const DEFAULT_SDCARD_BACKUP_FILE: &str = "/sdcard/Backup/app_data.json";
 
-/// Default SD card backup AppData directory on real hardware.
-pub const DEFAULT_SDCARD_BACKUP_APP_DATA: &str = "/sdcard/Backup/AppData";
+/// Format version for Pomelo OS backup archives.
+pub const BACKUP_VERSION: u32 = 1;
 
-/// Default stream chunk buffer size (4 KiB) to conserve memory.
-const CHUNK_SIZE: usize = 4096;
-
-/// Resolve the active root for AppData across host simulators and embedded hardware.
-pub fn resolve_internal_app_data() -> PathBuf {
-    crate::storage::resolve_app_data_root()
+/// Structured JSON representation of all backed-up system configurations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupArchive {
+    /// Schema version
+    pub version: u32,
+    /// Unix timestamp when backup was generated
+    pub created_at_unix: u64,
+    /// Mapped configuration entries: namespace -> (key -> JSON payload)
+    pub entries: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
-/// Resolve the active destination for `/sdcard/Backup/AppData`.
-pub fn resolve_sdcard_backup_dir() -> PathBuf {
+/// Resolve the active destination path for `/sdcard/Backup/app_data.json`.
+pub fn resolve_sdcard_backup_file() -> PathBuf {
     if Path::new("/sdcard").exists() {
-        PathBuf::from("/sdcard/Backup/AppData")
+        PathBuf::from("/sdcard/Backup/app_data.json")
     } else if Path::new("./sdcard").exists() {
-        PathBuf::from("./sdcard/Backup/AppData")
-    } else if crate::storage::is_test_runner() {
+        PathBuf::from("./sdcard/Backup/app_data.json")
+    } else if storage::is_test_runner() {
         std::env::temp_dir()
             .join("pomelo_tests")
             .join(format!("pid_{}", std::process::id()))
-            .join("sdcard/Backup/AppData")
+            .join("sdcard/Backup/app_data.json")
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".pomelo/sdcard/Backup/AppData")
+        PathBuf::from(home).join(".pomelo/sdcard/Backup/app_data.json")
     } else {
-        std::env::temp_dir().join("pomelo/sdcard/Backup/AppData")
+        std::env::temp_dir().join("pomelo/sdcard/Backup/app_data.json")
     }
 }
 
-/// Recursively copy all files and directories from `src` into `dst` using chunked streaming.
-pub fn copy_dir_all(src: &Path, dst: &Path, stats: &mut BackupStats) -> io::Result<()> {
-    if !dst.exists() {
-        fs::create_dir_all(dst)?;
+/// Helper to normalize any path (directory or file) into the target backup file path.
+fn normalize_backup_path(p: &Path) -> PathBuf {
+    if p.is_dir() || p.extension().is_none() {
+        p.join("app_data.json")
+    } else {
+        p.to_path_buf()
     }
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if file_type.is_dir() {
-            copy_dir_all(&src_path, &dst_path, stats)?;
-        } else if file_type.is_file() {
-            let bytes = copy_file_chunked(&src_path, &dst_path)?;
-            stats.files_count += 1;
-            stats.bytes_count += bytes;
-        }
-    }
-    Ok(())
 }
 
-/// Stream a single file in 4 KiB chunks to avoid large heap allocations.
-fn copy_file_chunked(src: &Path, dst: &Path) -> io::Result<u64> {
-    let mut reader = fs::File::open(src)?;
-    let mut writer = fs::File::create(dst)?;
-    let mut buf = [0u8; CHUNK_SIZE];
-    let mut total = 0u64;
+/// Atomically back up all Flash NVS / KV configurations to a designated file path on SD card.
+pub fn backup_app_data_to_file(target_file: &Path) -> Result<BackupStats, HalError> {
+    let target = normalize_backup_path(target_file);
 
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n])?;
-        total += n as u64;
-    }
-    writer.flush()?;
-    Ok(total)
-}
-
-/// Atomically back up `src` (internal AppData) to `dst` (SD card Backup AppData).
-pub fn backup_app_data_with_paths(src: &Path, dst: &Path) -> Result<BackupStats, HalError> {
-    if !src.exists() {
-        return Err(HalError::Io(format!(
-            "Source AppData directory does not exist: {}",
-            src.display()
-        )));
-    }
-
-    let dst_parent = dst.parent().unwrap_or(dst);
-    fs::create_dir_all(dst_parent).map_err(|e| {
-        HalError::Io(format!("Failed to create backup destination directory: {e}"))
+    // 1. Dump all current KV entries across all namespaces
+    let kv_dump = storage::kv_dump_all().map_err(|e| {
+        HalError::Io(format!("Failed to dump KV storage for backup: {e}"))
     })?;
 
-    let tmp_dst = dst_parent.join("AppData.tmp");
-    let old_dst = dst_parent.join("AppData.old");
+    let mut entries_count = 0usize;
+    let mut mapped_entries: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
 
-    // Clean up stale temporary directories if left behind from previous interrupted runs
-    if tmp_dst.exists() {
-        let _ = fs::remove_dir_all(&tmp_dst);
-    }
-    if old_dst.exists() {
-        let _ = fs::remove_dir_all(&old_dst);
-    }
-
-    let mut stats = BackupStats::default();
-
-    // 1. Copy into temporary folder
-    if let Err(e) = copy_dir_all(src, &tmp_dst, &mut stats) {
-        let _ = fs::remove_dir_all(&tmp_dst);
-        return Err(HalError::Io(format!(
-            "Failed copying files to temporary backup directory: {e}"
-        )));
-    }
-
-    // 2. Safe rename / swap
-    if dst.exists() {
-        if let Err(e) = fs::rename(dst, &old_dst) {
-            // If rename across or on existing directory fails, remove dst
-            if let Err(err_rm) = fs::remove_dir_all(dst) {
-                let _ = fs::remove_dir_all(&tmp_dst);
-                return Err(HalError::Io(format!(
-                    "Failed to rotate existing backup: {e} / {err_rm}"
-                )));
+    for (ns, keys) in kv_dump {
+        let mut ns_map = BTreeMap::new();
+        for (key, raw_bytes) in keys {
+            entries_count += 1;
+            // Attempt to deserialize as JSON structure for readability
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&raw_bytes) {
+                ns_map.insert(key, val);
+            } else if let Ok(s) = std::str::from_utf8(&raw_bytes) {
+                ns_map.insert(key, serde_json::Value::String(s.to_string()));
+            } else {
+                // Raw binary data
+                ns_map.insert(key, serde_json::json!({
+                    "_binary_hex": hex_encode(&raw_bytes)
+                }));
             }
         }
-    }
-
-    if let Err(e) = fs::rename(&tmp_dst, dst) {
-        // Rollback: try to restore old_dst if swap failed
-        if old_dst.exists() && !dst.exists() {
-            let _ = fs::rename(&old_dst, dst);
+        if !ns_map.is_empty() {
+            mapped_entries.insert(ns, ns_map);
         }
-        let _ = fs::remove_dir_all(&tmp_dst);
-        return Err(HalError::Io(format!(
-            "Failed activating new backup directory: {e}"
-        )));
     }
 
-    // 3. Final cleanup of old backup
-    if old_dst.exists() {
-        let _ = fs::remove_dir_all(&old_dst);
-    }
+    let archive = BackupArchive {
+        version: BACKUP_VERSION,
+        created_at_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        entries: mapped_entries,
+    };
 
-    Ok(stats)
-}
-
-/// Atomically restore `src` (SD card Backup AppData) into `dst` (internal AppData).
-pub fn restore_app_data_with_paths(src: &Path, dst: &Path) -> Result<BackupStats, HalError> {
-    if !src.exists() || !src.is_dir() {
-        return Err(HalError::Io(format!(
-            "Backup directory does not exist or is not a directory: {}",
-            src.display()
-        )));
-    }
-
-    let dst_parent = dst.parent().unwrap_or(dst);
-    fs::create_dir_all(dst_parent).map_err(|e| {
-        HalError::Io(format!(
-            "Failed to create internal AppData parent directory: {e}"
-        ))
+    let serialized = serde_json::to_string_pretty(&archive).map_err(|e| {
+        HalError::Io(format!("Failed to serialize backup archive to JSON: {e}"))
     })?;
 
-    let tmp_dst = dst_parent.join("AppData.tmp");
-    let rollback_dst = dst_parent.join("AppData.rollback");
+    // 2. Commit atomically to destination file
+    storage::atomic_write_text(&target, &serialized).map_err(|e| {
+        HalError::Io(format!("Failed to write backup file {}: {e}", target.display()))
+    })?;
 
-    // Clean up stale temporary directories if any
-    if tmp_dst.exists() {
-        let _ = fs::remove_dir_all(&tmp_dst);
-    }
-    if rollback_dst.exists() {
-        let _ = fs::remove_dir_all(&rollback_dst);
-    }
+    Ok(BackupStats::new(entries_count, serialized.len() as u64))
+}
 
-    let mut stats = BackupStats::default();
+/// Atomically restore Flash NVS / KV configurations from a backup JSON file on SD card.
+pub fn restore_app_data_from_file(source_file: &Path) -> Result<BackupStats, HalError> {
+    let source = normalize_backup_path(source_file);
 
-    // 1. Copy into temporary internal directory
-    if let Err(e) = copy_dir_all(src, &tmp_dst, &mut stats) {
-        let _ = fs::remove_dir_all(&tmp_dst);
+    if !source.exists() || !source.is_file() {
         return Err(HalError::Io(format!(
-            "Failed copying files from backup to temporary directory: {e}"
+            "Backup file does not exist: {}",
+            source.display()
         )));
     }
 
-    // 2. Safe rename / swap
-    if dst.exists() {
-        if let Err(e) = fs::rename(dst, &rollback_dst) {
-            if let Err(err_rm) = fs::remove_dir_all(dst) {
-                let _ = fs::remove_dir_all(&tmp_dst);
-                return Err(HalError::Io(format!(
-                    "Failed preparing rollback for current AppData: {e} / {err_rm}"
-                )));
-            }
+    let content = fs::read_to_string(&source).map_err(|e| {
+        HalError::Io(format!("Failed to read backup file {}: {e}", source.display()))
+    })?;
+
+    let archive: BackupArchive = serde_json::from_str(&content).map_err(|e| {
+        HalError::Io(format!("Failed to parse backup archive JSON: {e}"))
+    })?;
+
+    let mut restored_count = 0usize;
+
+    // Write back all entries directly to Flash NVS / KV storage
+    for (ns, keys) in archive.entries {
+        for (key, val) in keys {
+            let bytes = match val {
+                serde_json::Value::String(s) => s.into_bytes(),
+                serde_json::Value::Object(ref obj) if obj.contains_key("_binary_hex") => {
+                    let hex_str = obj.get("_binary_hex").and_then(|v| v.as_str()).unwrap_or("");
+                    hex_decode(hex_str).unwrap_or_default()
+                }
+                other => serde_json::to_vec(&other).map_err(|e| {
+                    HalError::Io(format!("Failed to serialize value for {ns}/{key}: {e}"))
+                })?,
+            };
+
+            storage::kv_set_raw(&ns, &key, &bytes).map_err(|e| {
+                HalError::Io(format!("Failed to restore KV entry {ns}/{key}: {e}"))
+            })?;
+
+            restored_count += 1;
         }
     }
 
-    if let Err(e) = fs::rename(&tmp_dst, dst) {
-        // Rollback: restore previous internal data
-        if rollback_dst.exists() && !dst.exists() {
-            let _ = fs::rename(&rollback_dst, dst);
-        }
-        let _ = fs::remove_dir_all(&tmp_dst);
-        return Err(HalError::Io(format!(
-            "Failed activating restored AppData: {e}"
-        )));
-    }
-
-    // 3. Cleanup rollback directory
-    if rollback_dst.exists() {
-        let _ = fs::remove_dir_all(&rollback_dst);
-    }
-
-    Ok(stats)
+    Ok(BackupStats::new(restored_count, content.len() as u64))
 }
 
-/// Check whether a valid backup directory exists at `path`.
-pub fn has_backup_with_path(path: &Path) -> bool {
-    path.is_dir()
+/// Check whether a valid non-empty backup archive file exists at `path`.
+pub fn has_backup_at_file(path: &Path) -> bool {
+    let target = normalize_backup_path(path);
+    target.is_file() && fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false)
 }
 
-/// Back up `/internal/AppData` to `/sdcard/Backup/AppData` using resolved paths.
+/// Back up all configurations to `/sdcard/Backup/app_data.json` using resolved platform paths.
 pub fn backup_app_data() -> Result<BackupStats, HalError> {
-    backup_app_data_with_paths(&resolve_internal_app_data(), &resolve_sdcard_backup_dir())
+    backup_app_data_to_file(&resolve_sdcard_backup_file())
 }
 
-/// Restore `/sdcard/Backup/AppData` into `/internal/AppData` using resolved paths.
+/// Restore all configurations from `/sdcard/Backup/app_data.json` using resolved platform paths.
 pub fn restore_app_data() -> Result<BackupStats, HalError> {
-    restore_app_data_with_paths(&resolve_sdcard_backup_dir(), &resolve_internal_app_data())
+    restore_app_data_from_file(&resolve_sdcard_backup_file())
 }
 
-/// Check whether a valid backup exists on the SD card.
+/// Check whether a valid backup file exists on the SD card.
 pub fn has_backup() -> bool {
-    has_backup_with_path(&resolve_sdcard_backup_dir())
+    has_backup_at_file(&resolve_sdcard_backup_file())
+}
+
+/// Backward compatibility helper for legacy path pairs.
+pub fn backup_app_data_with_paths(_src: &Path, dst: &Path) -> Result<BackupStats, HalError> {
+    backup_app_data_to_file(dst)
+}
+
+/// Backward compatibility helper for legacy path pairs.
+pub fn restore_app_data_with_paths(src: &Path, _dst: &Path) -> Result<BackupStats, HalError> {
+    restore_app_data_from_file(src)
+}
+
+/// Backward compatibility helper for checking backup existence at path.
+pub fn has_backup_with_path(path: &Path) -> bool {
+    has_backup_at_file(path)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect()
 }

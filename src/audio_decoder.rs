@@ -212,6 +212,11 @@ pub fn probe_audio_meta(path: &str) -> Result<AudioMeta, HalError> {
     AudioDecoder::open(path).map(|d| *d.meta())
 }
 
+/// Probes audio metadata directly from an in-memory byte buffer (e.g. bundled static assets).
+pub fn probe_audio_meta_from_bytes(bytes: &[u8], format_hint: Option<&str>) -> Result<AudioMeta, HalError> {
+    AudioDecoder::from_bytes(bytes.to_vec(), format_hint).map(|d| *d.meta())
+}
+
 /// Format a duration in seconds as `MM:SS`.
 pub fn format_time(seconds: f32) -> String {
     let total_secs = seconds.max(0.0) as u32;

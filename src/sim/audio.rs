@@ -20,6 +20,7 @@ use std::sync::mpsc::{channel, Sender};
 #[allow(dead_code)]
 enum SimAudioCommand {
     Play { path: String, volume: f32 },
+    PlayBytes { bytes: &'static [u8], volume: f32, is_loop: bool },
     Pause,
     Resume,
     Stop,
@@ -67,6 +68,19 @@ impl SimAudio {
                                             sink.append(source);
                                             sink.play();
                                         }
+                                    }
+                                }
+                            }
+                            SimAudioCommand::PlayBytes { bytes, volume, is_loop: _ } => {
+                                if let Some(sink) = &sink {
+                                    sink.stop();
+                                    let cursor = std::io::Cursor::new(bytes);
+                                    if let Ok(source) =
+                                        rodio::Decoder::new(std::io::BufReader::new(cursor))
+                                    {
+                                        sink.set_volume(volume);
+                                        sink.append(source);
+                                        sink.play();
                                     }
                                 }
                             }
@@ -156,6 +170,40 @@ impl AudioBackend for SimAudio {
 
     fn play_loop(&mut self, path: &str) -> Result<AudioMeta, HalError> {
         let meta = self.play(path)?;
+        self.is_looping = true;
+        Ok(meta)
+    }
+
+    fn play_bytes(
+        &mut self,
+        bytes: &'static [u8],
+        format_hint: Option<&str>,
+    ) -> Result<AudioMeta, HalError> {
+        let meta = crate::audio_decoder::probe_audio_meta_from_bytes(bytes, format_hint)?;
+
+        self.duration = meta.duration_secs;
+        self.elapsed_base = 0.0;
+        self.started_at = Some(Instant::now());
+        self.paused = false;
+        self.is_playing = true;
+        self.is_looping = false;
+
+        let vol = (self.volume as f32) / 100.0;
+        self.send(SimAudioCommand::PlayBytes {
+            bytes,
+            volume: vol,
+            is_loop: false,
+        });
+
+        Ok(meta)
+    }
+
+    fn play_bytes_loop(
+        &mut self,
+        bytes: &'static [u8],
+        format_hint: Option<&str>,
+    ) -> Result<AudioMeta, HalError> {
+        let meta = self.play_bytes(bytes, format_hint)?;
         self.is_looping = true;
         Ok(meta)
     }

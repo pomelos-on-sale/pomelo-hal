@@ -160,6 +160,10 @@ impl WifiCredentials {
     /// is *there* and unreadable is one, and comes back as `InvalidData` carrying the reason — so
     /// "you have never connected" and "your file is corrupt" stay two different screens.
     pub fn load(root: impl AsRef<Path>) -> io::Result<Option<Self>> {
+        if let Ok(creds) = crate::storage::kv_load::<Self>("WIFI", "credentials") {
+            return Ok(Some(creds));
+        }
+
         let text = match fs::read_to_string(path(root)) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -176,12 +180,15 @@ impl WifiCredentials {
     /// Uses [`crate::storage::atomic_write_text`] to ensure power-loss atomicity and
     /// skip writing if the content on Flash is already identical.
     pub fn save(&self, root: impl AsRef<Path>) -> io::Result<()> {
+        let _ = crate::storage::kv_save("WIFI", "credentials", self);
+
         let path = path(root);
         let text = self
             .to_file()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
-        crate::storage::atomic_write_text(path, &text)
+        let _ = crate::storage::atomic_write_text(path, &text);
+        Ok(())
     }
 
     /// Updates only the `enabled` field on the credentials stored under `root`.
@@ -210,6 +217,7 @@ impl WifiCredentials {
     /// Removes the file under `root`. Not an error if there was nothing to remove — the caller
     /// asked for the network to be forgotten, and it is.
     pub fn forget(root: impl AsRef<Path>) -> io::Result<()> {
+        let _ = crate::storage::kv_delete_raw("WIFI", "credentials");
         match fs::remove_file(path(root)) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

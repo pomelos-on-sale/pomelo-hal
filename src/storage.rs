@@ -152,47 +152,373 @@ pub fn save_toml_atomic<T: Serialize>(path: impl AsRef<Path>, value: &T) -> io::
     atomic_write_text(path, &content)
 }
 
+#[cfg(target_os = "espidf")]
+mod nvs_ffi {
+    pub type HalNvsDumpCb = unsafe extern "C" fn(
+        ns: *const std::os::raw::c_char,
+        key: *const std::os::raw::c_char,
+        data: *const u8,
+        len: usize,
+        ctx: *mut std::ffi::c_void,
+    );
+
+    extern "C" {
+        pub fn hal_nvs_get_blob(
+            part: *const std::os::raw::c_char,
+            ns: *const std::os::raw::c_char,
+            key: *const std::os::raw::c_char,
+            out_buf: *mut u8,
+            inout_len: *mut usize,
+        ) -> i32;
+        pub fn hal_nvs_set_blob(
+            part: *const std::os::raw::c_char,
+            ns: *const std::os::raw::c_char,
+            key: *const std::os::raw::c_char,
+            data: *const u8,
+            len: usize,
+        ) -> i32;
+        pub fn hal_nvs_erase_key(
+            part: *const std::os::raw::c_char,
+            ns: *const std::os::raw::c_char,
+            key: *const std::os::raw::c_char,
+        ) -> i32;
+        pub fn hal_nvs_dump_all(
+            part: *const std::os::raw::c_char,
+            cb: HalNvsDumpCb,
+            ctx: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+}
+
+/// Raw low-level KV get: retrieves binary data from Flash NVS (on ESP32)
+/// or from mock persistent file storage (on desktop simulator/hosts).
+pub fn kv_get_raw(namespace: &str, key: &str) -> io::Result<Option<Vec<u8>>> {
+    #[cfg(target_os = "espidf")]
+    {
+        use std::ffi::CString;
+        let c_part = CString::new("nvs_app").unwrap();
+        let c_ns = CString::new(namespace).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_key = CString::new(key).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        let mut len: usize = 0;
+        let ret = unsafe {
+            nvs_ffi::hal_nvs_get_blob(
+                c_part.as_ptr(),
+                c_ns.as_ptr(),
+                c_key.as_ptr(),
+                std::ptr::null_mut(),
+                &mut len,
+            )
+        };
+        // ESP_ERR_NVS_NOT_FOUND (0x1102) or ESP_ERR_NVS_NOT_INITIALIZED (0x1101)
+        if ret == 0x1102 || ret == 0x1101 {
+            return Ok(None);
+        }
+        if ret != 0 {
+            return Err(io::Error::new(io::ErrorKind::Other, format!("nvs_get_blob query error: {ret:#x}")));
+        }
+
+        let mut buf = vec![0u8; len];
+        let ret = unsafe {
+            nvs_ffi::hal_nvs_get_blob(
+                c_part.as_ptr(),
+                c_ns.as_ptr(),
+                c_key.as_ptr(),
+                buf.as_mut_ptr(),
+                &mut len,
+            )
+        };
+        if ret == 0 {
+            buf.truncate(len);
+            Ok(Some(buf))
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, format!("nvs_get_blob read error: {ret:#x}")))
+        }
+    }
+
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let p = kv_mock_file(namespace, key);
+        if p.exists() {
+            fs::read(&p).map(Some)
+        } else {
+            let legacy_toml = app_dir(namespace).join("config.toml");
+            if legacy_toml.exists() {
+                fs::read(&legacy_toml).map(Some)
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Raw low-level KV set: saves binary data to Flash NVS (on ESP32)
+/// or to mock persistent file storage (on desktop simulator/hosts).
+pub fn kv_set_raw(namespace: &str, key: &str, data: &[u8]) -> io::Result<()> {
+    #[cfg(target_os = "espidf")]
+    {
+        use std::ffi::CString;
+        let c_part = CString::new("nvs_app").unwrap();
+        let c_ns = CString::new(namespace).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_key = CString::new(key).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        let ret = unsafe {
+            nvs_ffi::hal_nvs_set_blob(
+                c_part.as_ptr(),
+                c_ns.as_ptr(),
+                c_key.as_ptr(),
+                data.as_ptr(),
+                data.len(),
+            )
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, format!("nvs_set_blob error: {ret:#x}")))
+        }
+    }
+
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let p = kv_mock_file(namespace, key);
+        atomic_write(p, data, true)
+    }
+}
+
+/// Raw low-level KV delete: erases key from Flash NVS (on ESP32)
+/// or from mock persistent file storage (on desktop simulator/hosts).
+pub fn kv_delete_raw(namespace: &str, key: &str) -> io::Result<()> {
+    #[cfg(target_os = "espidf")]
+    {
+        use std::ffi::CString;
+        let c_part = CString::new("nvs_app").unwrap();
+        let c_ns = CString::new(namespace).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let c_key = CString::new(key).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        let ret = unsafe {
+            nvs_ffi::hal_nvs_erase_key(
+                c_part.as_ptr(),
+                c_ns.as_ptr(),
+                c_key.as_ptr(),
+            )
+        };
+        if ret == 0 || ret == 0x1102 {
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, format!("nvs_erase_key error: {ret:#x}")))
+        }
+    }
+
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let p = kv_mock_file(namespace, key);
+        if p.exists() {
+            let _ = fs::remove_file(&p);
+        }
+        let legacy_toml = app_dir(namespace).join("config.toml");
+        if legacy_toml.exists() {
+            let _ = fs::remove_file(&legacy_toml);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn kv_mock_file(namespace: &str, key: &str) -> PathBuf {
+    resolve_app_data_root()
+        .join("kv")
+        .join(namespace)
+        .join(format!("{key}.bin"))
+}
+
+/// Loads and deserializes a typed configuration from KV storage.
+pub fn kv_load<T: DeserializeOwned>(namespace: &str, key: &str) -> io::Result<T> {
+    let bytes = match kv_get_raw(namespace, key)? {
+        Some(b) => b,
+        None => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("key '{namespace}/{key}' not found"),
+            ))
+        }
+    };
+
+    // Try JSON first
+    if let Ok(val) = serde_json::from_slice::<T>(&bytes) {
+        return Ok(val);
+    }
+    // Fallback to TOML (if legacy file content was TOML)
+    if let Ok(s) = std::str::from_utf8(&bytes) {
+        if let Ok(val) = toml::from_str::<T>(s) {
+            return Ok(val);
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "deserialization failed",
+    ))
+}
+
+/// Serializes and saves a typed configuration to KV storage.
+pub fn kv_save<T: Serialize>(namespace: &str, key: &str, value: &T) -> io::Result<()> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    kv_set_raw(namespace, key, &bytes)
+}
+
+/// Dumps all key-value entries across all namespaces into an in-memory map.
+pub fn kv_dump_all() -> io::Result<std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<u8>>>> {
+    let mut result: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<u8>>> = std::collections::BTreeMap::new();
+
+    #[cfg(target_os = "espidf")]
+    {
+        use std::ffi::{CStr, CString};
+        use std::os::raw::c_char;
+
+        unsafe extern "C" fn dump_callback(
+            ns: *const c_char,
+            key: *const c_char,
+            data: *const u8,
+            len: usize,
+            ctx: *mut std::ffi::c_void,
+        ) {
+            if ns.is_null() || key.is_null() || data.is_null() || ctx.is_null() {
+                return;
+            }
+            let map = &mut *(ctx as *mut std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<u8>>>);
+            let ns_str = CStr::from_ptr(ns).to_string_lossy().to_string();
+            let key_str = CStr::from_ptr(key).to_string_lossy().to_string();
+            let slice = std::slice::from_raw_parts(data, len);
+            map.entry(ns_str).or_default().insert(key_str, slice.to_vec());
+        }
+
+        let c_part = CString::new("nvs_app").unwrap();
+        unsafe {
+            nvs_ffi::hal_nvs_dump_all(
+                c_part.as_ptr(),
+                dump_callback,
+                &mut result as *mut _ as *mut std::ffi::c_void,
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let kv_dir = resolve_app_data_root().join("kv");
+        if kv_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&kv_dir) {
+                for ns_entry in entries.flatten() {
+                    if ns_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        let ns_name = ns_entry.file_name().to_string_lossy().to_string();
+                        if let Ok(files) = fs::read_dir(ns_entry.path()) {
+                            for f in files.flatten() {
+                                if f.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                                    let file_name = f.file_name().to_string_lossy().to_string();
+                                    if let Some(key) = file_name.strip_suffix(".bin") {
+                                        if let Ok(data) = fs::read(f.path()) {
+                                            result.entry(ns_name.clone()).or_default().insert(key.to_string(), data);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Ensure all known system/app namespaces and keys are probed if present
+    const KNOWN: &[(&str, &str)] = &[
+        ("SETTINGS", "preferences"),
+        ("SETTINGS", "config"),
+        ("WIFI", "credentials"),
+        ("ALARM_CLOCK", "config"),
+        ("DAILY_SCHEDULE", "config"),
+        ("DAILY_SCHED", "config"),
+        ("SYSTEM", "env"),
+    ];
+    for &(ns, key) in KNOWN {
+        let exists = result.get(ns).and_then(|m| m.get(key)).is_some();
+        if !exists {
+            if let Ok(Some(bytes)) = kv_get_raw(ns, key) {
+                result.entry(ns.to_string()).or_default().insert(key.to_string(), bytes);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Clears all key-value entries across all namespaces.
+pub fn kv_clear_all() -> io::Result<()> {
+    let dump = kv_dump_all()?;
+    for (ns, entries) in dump {
+        for (key, _) in entries {
+            let _ = kv_delete_raw(&ns, &key);
+        }
+    }
+    Ok(())
+}
+
+
 /// A standard trait for persistent configuration structs.
 ///
 /// Types implementing this trait automatically gain type-safe, atomic,
-/// and wear-mitigated `load()` and `save()` operations.
+/// and wear-mitigated `load()` and `save()` operations backed by Flash NVS (on board)
+/// or mock KV storage (on desktop simulator).
 pub trait PersistentConfig: Serialize + DeserializeOwned + Default {
-    /// Directory name under AppData (e.g. "SETTINGS", "DAILY_SCHEDULE", "WIFI").
+    /// Directory/Namespace under NVS or KV (e.g. "SETTINGS", "DAILY_SCHED", "WIFI").
+    /// Keep <= 15 ASCII characters for NVS compatibility.
     const APP_ID: &'static str;
 
-    /// File name within the application directory (defaults to "config.toml").
+    /// Key under NVS or KV (defaults to "config").
+    /// Must be <= 15 ASCII characters for NVS key compatibility.
+    const KEY: &'static str = "config";
+
+    /// File name within the application directory for legacy fallback or export.
     const FILE_NAME: &'static str = "config.toml";
 
-    /// Returns the full path to the configuration file.
+    /// Returns the full path to the configuration file (legacy/export).
     fn config_path() -> PathBuf {
         app_file_path(Self::APP_ID, Self::FILE_NAME)
     }
 
-    /// Loads the configuration from disk, falling back to `Default::default()`
-    /// if the file does not exist or contains invalid data.
+    /// Loads the configuration, falling back to `Default::default()`
+    /// if the key does not exist or contains invalid data.
     fn load() -> Self {
         Self::try_load().unwrap_or_default()
     }
 
-    /// Attempts to load the configuration, returning an error if the file
-    /// cannot be read or parsed.
+    /// Attempts to load the configuration from KV/NVS storage (falling back to file if present).
     fn try_load() -> io::Result<Self> {
-        load_toml(Self::config_path())
+        match kv_load(Self::APP_ID, Self::KEY) {
+            Ok(val) => Ok(val),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let p = Self::config_path();
+                if p.exists() {
+                    load_toml(&p)
+                } else {
+                    Err(e)
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
-    /// Saves the configuration atomically to disk.
+    /// Saves the configuration to KV/NVS storage.
     fn save(&self) -> io::Result<()> {
-        save_toml_atomic(Self::config_path(), self)
+        kv_save(Self::APP_ID, Self::KEY, self)
     }
 
-    /// Removes the configuration file from disk.
+    /// Removes the configuration from KV/NVS storage.
     fn forget() -> io::Result<()> {
+        let _ = kv_delete_raw(Self::APP_ID, Self::KEY);
         let path = Self::config_path();
         if path.exists() {
-            fs::remove_file(path)
-        } else {
-            Ok(())
+            let _ = fs::remove_file(path);
         }
+        Ok(())
     }
 }
 
