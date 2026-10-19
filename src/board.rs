@@ -21,7 +21,6 @@ pub type EventListener = Arc<dyn Fn(&SystemEvent) + Send + Sync>;
 
 const MAX_EVENT_QUEUE_SIZE: usize = 32;
 
-#[allow(dead_code)]
 #[derive(Default)]
 struct EventStateCache {
     last_battery: Option<u8>,
@@ -49,7 +48,6 @@ pub struct Board {
     next_listener_id: std::sync::atomic::AtomicUsize,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
-    #[allow(dead_code)]
     cache: Mutex<EventStateCache>,
     wakeup: Arc<crate::wakeup::WakeupScheduler>,
 }
@@ -60,6 +58,7 @@ impl Board {
     /// The order is `power`, `wifi`, `audio`, `mic`, `imu`, `input`, `time`, `storage`, `http` — the same order the accessors
     /// appear in. It takes boxes rather than generics so the caller can mix concrete types
     /// and, in a test, its own fakes.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_backends(
         power: Box<dyn PowerBackend>,
         wifi: Box<dyn WifiBackend>,

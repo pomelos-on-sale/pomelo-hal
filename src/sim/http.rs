@@ -247,7 +247,7 @@ impl HttpBackend for SimHttp {
                 })
                 .ok();
 
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(target_os = "espidf")]
