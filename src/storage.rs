@@ -12,12 +12,15 @@
 
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_os = "espidf"))]
+use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 /// Default desktop mock AppData directory under user home folder.
+#[cfg(not(target_os = "espidf"))]
 const DESKTOP_APP_DATA_DIR: &str = ".pomelo/AppData";
 
 /// Returns whether the current process is running as a test harness binary.
@@ -39,6 +42,7 @@ pub fn is_test_runner() -> bool {
 }
 
 /// Resolves the active root directory for mock KV storage on desktop/tests.
+#[cfg(not(target_os = "espidf"))]
 pub(crate) fn resolve_app_data_root() -> PathBuf {
     // 1. Environment variable override (crucial for unit tests and multi-instance testing)
     if let Ok(custom) = std::env::var("POMELO_APP_DATA") {
@@ -450,14 +454,9 @@ mod tests {
 
     fn with_test_dir<F: FnOnce(&Path)>(f: F) {
         let _guard = TEST_MUTEX.lock().unwrap();
-        let test_root = std::env::temp_dir().join(format!("pomelo_storage_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&test_root);
-        fs::create_dir_all(&test_root).unwrap();
-
-        std::env::set_var("POMELO_APP_DATA", &test_root);
+        let test_root = resolve_app_data_root();
+        let _ = fs::create_dir_all(&test_root);
         f(&test_root);
-        std::env::remove_var("POMELO_APP_DATA");
-        let _ = fs::remove_dir_all(&test_root);
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

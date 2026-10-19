@@ -15,12 +15,15 @@ use crate::traits::{
     AudioBackend, HttpBackend, ImuBackend, InputBackend, MicBackend, PowerBackend, StorageBackend,
     TimeBackend, WifiBackend,
 };
-use crate::types::{SdCardStatus, SystemEvent, WifiStatus};
+use crate::types::SystemEvent;
+#[cfg(not(target_os = "espidf"))]
+use crate::types::{SdCardStatus, WifiStatus};
 
 pub type EventListener = Arc<dyn Fn(&SystemEvent) + Send + Sync>;
 
 const MAX_EVENT_QUEUE_SIZE: usize = 32;
 
+#[cfg(not(target_os = "espidf"))]
 #[derive(Default)]
 struct EventStateCache {
     last_battery: Option<u8>,
@@ -48,6 +51,7 @@ pub struct Board {
     next_listener_id: std::sync::atomic::AtomicUsize,
     events: Mutex<VecDeque<SystemEvent>>,
     event_condvar: Condvar,
+    #[cfg(not(target_os = "espidf"))]
     cache: Mutex<EventStateCache>,
     wakeup: Arc<crate::wakeup::WakeupScheduler>,
 }
@@ -84,6 +88,7 @@ impl Board {
             next_listener_id: std::sync::atomic::AtomicUsize::new(1),
             events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE_SIZE)),
             event_condvar: Condvar::new(),
+            #[cfg(not(target_os = "espidf"))]
             cache: Mutex::new(EventStateCache::default()),
             wakeup: Arc::new(crate::wakeup::WakeupScheduler::new()),
         }
