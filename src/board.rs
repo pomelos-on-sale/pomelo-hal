@@ -290,6 +290,16 @@ impl Board {
         self.power().set_stay_awake_on_usb(enable)
     }
 
+    /// Whether an application currently requests keeping the screen awake.
+    pub fn is_keep_screen_on(&self) -> bool {
+        self.power().is_keep_screen_on().unwrap_or(false)
+    }
+
+    /// Requests or releases keeping the screen awake.
+    pub fn set_keep_screen_on(&self, enable: bool) -> Result<(), crate::error::HalError> {
+        self.power().set_keep_screen_on(enable)
+    }
+
     /// Access the thread-safe scheduled wakeup manager.
     pub fn wakeup_scheduler(&self) -> &crate::wakeup::WakeupScheduler {
         &self.wakeup

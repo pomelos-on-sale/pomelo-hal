@@ -46,4 +46,12 @@ pub trait PowerBackend: Send + Sync {
     fn set_stay_awake_on_usb(&mut self, _enable: bool) -> Result<(), HalError> {
         Ok(())
     }
+    /// Whether keeping screen on (wake lock) is requested. Default returns `Ok(false)`.
+    fn is_keep_screen_on(&self) -> Result<bool, HalError> {
+        Ok(false)
+    }
+    /// Requests or releases keeping the screen on. Default returns `Ok(())`.
+    fn set_keep_screen_on(&mut self, _enable: bool) -> Result<(), HalError> {
+        Ok(())
+    }
 }

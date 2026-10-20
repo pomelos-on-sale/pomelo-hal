@@ -15,6 +15,7 @@ pub struct SimPower {
     screen_off_timeout: Option<Duration>,
     stay_awake_on_usb: bool,
     usb_connected: bool,
+    keep_screen_on: bool,
 }
 
 impl SimPower {
@@ -28,6 +29,7 @@ impl SimPower {
             screen_off_timeout: None,
             stay_awake_on_usb: true,
             usb_connected: true,
+            keep_screen_on: false,
         }
     }
 
@@ -94,6 +96,15 @@ impl PowerBackend for SimPower {
 
     fn set_stay_awake_on_usb(&mut self, enable: bool) -> Result<(), HalError> {
         self.stay_awake_on_usb = enable;
+        Ok(())
+    }
+
+    fn is_keep_screen_on(&self) -> Result<bool, HalError> {
+        Ok(self.keep_screen_on)
+    }
+
+    fn set_keep_screen_on(&mut self, enable: bool) -> Result<(), HalError> {
+        self.keep_screen_on = enable;
         Ok(())
     }
 }

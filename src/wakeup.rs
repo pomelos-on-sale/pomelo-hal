@@ -78,6 +78,12 @@ impl WakeupScheduler {
     pub fn schedule(&self, id: impl Into<String>, at: SystemTime, wake_screen: bool) {
         let id = id.into();
         let mut reqs = self.requests.lock().unwrap();
+        println!(
+            "[wakeup_scheduler] schedule: id='{}', wake_screen={}, total_requests={}",
+            id,
+            wake_screen,
+            reqs.len() + 1
+        );
         reqs.insert(
             id.clone(),
             WakeupRequest {
@@ -100,6 +106,7 @@ impl WakeupScheduler {
     pub fn cancel(&self, id: &str) -> bool {
         let mut reqs = self.requests.lock().unwrap();
         let removed = reqs.remove(id).is_some();
+        println!("[wakeup_scheduler] cancel: id='{}', removed={}", id, removed);
         if removed {
             self.notify_change(&reqs);
         }
@@ -149,6 +156,7 @@ impl WakeupScheduler {
         }
 
         if !expired.is_empty() {
+            println!("[wakeup_scheduler] poll_expired returned {} expired items: {:?}", expired.len(), keys_to_remove);
             self.notify_change(&reqs);
         }
 
