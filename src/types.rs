@@ -226,7 +226,7 @@ impl StorageStats {
     }
 }
 
-/// Statistics from an AppData backup or restore operation.
+/// Statistics from a system data backup or restore operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BackupStats {
     /// Number of files copied.

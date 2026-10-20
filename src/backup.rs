@@ -1,7 +1,7 @@
 //! Backup and restore engine for Pomelo OS configurations and data.
 //!
 //! Provides transactional, atomic backup operations between Flash NVS / KV storage
-//! and external MicroSD storage (`/sdcard/Backup/app_data.json`).
+//! and external MicroSD storage (`/sdcard/Backup/system_data.json`).
 //!
 //! # Safety & Power-Loss Guarantees
 //! - **Backup**: Dumps all persistent configurations from Flash NVS / KV storage into a structured
@@ -20,7 +20,7 @@ use crate::storage;
 use crate::types::BackupStats;
 
 /// Default SD card backup file path on real embedded hardware.
-pub const DEFAULT_SDCARD_BACKUP_FILE: &str = "/sdcard/Backup/app_data.json";
+pub const DEFAULT_SDCARD_BACKUP_FILE: &str = "/sdcard/Backup/system_data.json";
 
 /// Format version for Pomelo OS backup archives.
 pub const BACKUP_VERSION: u32 = 1;
@@ -36,35 +36,35 @@ pub struct BackupArchive {
     pub entries: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
-/// Resolve the active destination path for `/sdcard/Backup/app_data.json`.
+/// Resolve the active destination path for `/sdcard/Backup/system_data.json`.
 pub fn resolve_sdcard_backup_file() -> PathBuf {
     if Path::new("/sdcard").exists() {
-        PathBuf::from("/sdcard/Backup/app_data.json")
+        PathBuf::from("/sdcard/Backup/system_data.json")
     } else if Path::new("./sdcard").exists() {
-        PathBuf::from("./sdcard/Backup/app_data.json")
+        PathBuf::from("./sdcard/Backup/system_data.json")
     } else if storage::is_test_runner() {
         std::env::temp_dir()
             .join("pomelo_tests")
             .join(format!("pid_{}", std::process::id()))
-            .join("sdcard/Backup/app_data.json")
+            .join("sdcard/Backup/system_data.json")
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".pomelo/sdcard/Backup/app_data.json")
+        PathBuf::from(home).join(".pomelo/sdcard/Backup/system_data.json")
     } else {
-        std::env::temp_dir().join("pomelo/sdcard/Backup/app_data.json")
+        std::env::temp_dir().join("pomelo/sdcard/Backup/system_data.json")
     }
 }
 
 /// Helper to normalize any path (directory or file) into the target backup file path.
 fn normalize_backup_path(p: &Path) -> PathBuf {
     if p.is_dir() || p.extension().is_none() {
-        p.join("app_data.json")
+        p.join("system_data.json")
     } else {
         p.to_path_buf()
     }
 }
 
 /// Atomically back up all Flash NVS / KV configurations to a designated file path on SD card.
-pub fn backup_app_data_to_file(target_file: &Path) -> Result<BackupStats, HalError> {
+pub fn backup_system_data_to_file(target_file: &Path) -> Result<BackupStats, HalError> {
     let target = normalize_backup_path(target_file);
 
     // 1. Dump all current KV entries across all namespaces
@@ -118,7 +118,7 @@ pub fn backup_app_data_to_file(target_file: &Path) -> Result<BackupStats, HalErr
 }
 
 /// Atomically restore Flash NVS / KV configurations from a backup JSON file on SD card.
-pub fn restore_app_data_from_file(source_file: &Path) -> Result<BackupStats, HalError> {
+pub fn restore_system_data_from_file(source_file: &Path) -> Result<BackupStats, HalError> {
     let source = normalize_backup_path(source_file);
 
     if !source.exists() || !source.is_file() {
@@ -169,34 +169,19 @@ pub fn has_backup_at_file(path: &Path) -> bool {
     target.is_file() && fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false)
 }
 
-/// Back up all configurations to `/sdcard/Backup/app_data.json` using resolved platform paths.
-pub fn backup_app_data() -> Result<BackupStats, HalError> {
-    backup_app_data_to_file(&resolve_sdcard_backup_file())
+/// Back up all configurations to `/sdcard/Backup/system_data.json` using resolved platform paths.
+pub fn backup_system_data() -> Result<BackupStats, HalError> {
+    backup_system_data_to_file(&resolve_sdcard_backup_file())
 }
 
-/// Restore all configurations from `/sdcard/Backup/app_data.json` using resolved platform paths.
-pub fn restore_app_data() -> Result<BackupStats, HalError> {
-    restore_app_data_from_file(&resolve_sdcard_backup_file())
+/// Restore all configurations from `/sdcard/Backup/system_data.json` using resolved platform paths.
+pub fn restore_system_data() -> Result<BackupStats, HalError> {
+    restore_system_data_from_file(&resolve_sdcard_backup_file())
 }
 
 /// Check whether a valid backup file exists on the SD card.
 pub fn has_backup() -> bool {
     has_backup_at_file(&resolve_sdcard_backup_file())
-}
-
-/// Backward compatibility helper for legacy path pairs.
-pub fn backup_app_data_with_paths(_src: &Path, dst: &Path) -> Result<BackupStats, HalError> {
-    backup_app_data_to_file(dst)
-}
-
-/// Backward compatibility helper for legacy path pairs.
-pub fn restore_app_data_with_paths(src: &Path, _dst: &Path) -> Result<BackupStats, HalError> {
-    restore_app_data_from_file(src)
-}
-
-/// Backward compatibility helper for checking backup existence at path.
-pub fn has_backup_with_path(path: &Path) -> bool {
-    has_backup_at_file(path)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

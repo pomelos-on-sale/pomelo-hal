@@ -33,19 +33,19 @@ pub trait StorageBackend: Send + Sync {
     fn sd_stats(&self) -> Result<StorageStats, HalError>;
 
     /// Perform an atomic backup of Flash NVS / KV configurations to the SD card.
-    fn backup_app_data(&mut self) -> Result<crate::types::BackupStats, HalError> {
+    fn backup_system_data(&mut self) -> Result<crate::types::BackupStats, HalError> {
         if self.sd_status() != SdCardStatus::Mounted {
             return Err(HalError::InvalidState);
         }
-        crate::backup::backup_app_data()
+        crate::backup::backup_system_data()
     }
 
     /// Perform an atomic restore of Flash NVS / KV configurations from the SD card.
-    fn restore_app_data(&mut self) -> Result<crate::types::BackupStats, HalError> {
+    fn restore_system_data(&mut self) -> Result<crate::types::BackupStats, HalError> {
         if self.sd_status() != SdCardStatus::Mounted {
             return Err(HalError::InvalidState);
         }
-        crate::backup::restore_app_data()
+        crate::backup::restore_system_data()
     }
 
     /// Check whether a valid backup directory exists on the SD card.

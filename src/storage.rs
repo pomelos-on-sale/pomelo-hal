@@ -19,9 +19,9 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// Default desktop mock AppData directory under user home folder.
+/// Default desktop mock storage directory under user home folder.
 #[cfg(not(target_os = "espidf"))]
-const DESKTOP_APP_DATA_DIR: &str = ".pomelo/AppData";
+const DESKTOP_POMELO_DIR: &str = ".pomelo";
 
 /// Returns whether the current process is running as a test harness binary.
 pub fn is_test_runner() -> bool {
@@ -43,9 +43,9 @@ pub fn is_test_runner() -> bool {
 
 /// Resolves the active root directory for mock KV storage on desktop/tests.
 #[cfg(not(target_os = "espidf"))]
-pub(crate) fn resolve_app_data_root() -> PathBuf {
+pub(crate) fn resolve_storage_root() -> PathBuf {
     // 1. Environment variable override (crucial for unit tests and multi-instance testing)
-    if let Ok(custom) = std::env::var("POMELO_APP_DATA") {
+    if let Ok(custom) = std::env::var("POMELO_STORAGE_DIR") {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
@@ -58,10 +58,10 @@ pub(crate) fn resolve_app_data_root() -> PathBuf {
             .join("pomelo_tests")
             .join(format!("pid_{}", std::process::id()))
     } else if let Ok(home) = std::env::var("HOME") {
-        // Desktop user home directory (~/.pomelo/AppData)
-        PathBuf::from(home).join(DESKTOP_APP_DATA_DIR)
+        // Desktop user home directory (~/.pomelo)
+        PathBuf::from(home).join(DESKTOP_POMELO_DIR)
     } else {
-        std::env::temp_dir().join("pomelo/AppData")
+        std::env::temp_dir().join("pomelo")
     }
 }
 
@@ -278,7 +278,7 @@ pub fn kv_delete_raw(namespace: &str, key: &str) -> io::Result<()> {
 
 #[cfg(not(target_os = "espidf"))]
 fn kv_mock_file(namespace: &str, key: &str) -> PathBuf {
-    resolve_app_data_root()
+    resolve_storage_root()
         .join("kv")
         .join(namespace)
         .join(format!("{key}.bin"))
@@ -349,7 +349,7 @@ pub fn kv_dump_all() -> io::Result<std::collections::BTreeMap<String, std::colle
 
     #[cfg(not(target_os = "espidf"))]
     {
-        let kv_dir = resolve_app_data_root().join("kv");
+        let kv_dir = resolve_storage_root().join("kv");
         if kv_dir.exists() {
             if let Ok(entries) = fs::read_dir(&kv_dir) {
                 for ns_entry in entries.flatten() {
@@ -454,7 +454,7 @@ mod tests {
 
     fn with_test_dir<F: FnOnce(&Path)>(f: F) {
         let _guard = TEST_MUTEX.lock().unwrap();
-        let test_root = resolve_app_data_root();
+        let test_root = resolve_storage_root();
         let _ = fs::create_dir_all(&test_root);
         f(&test_root);
     }

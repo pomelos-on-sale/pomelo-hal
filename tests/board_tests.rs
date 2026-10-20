@@ -457,17 +457,17 @@ fn board_http_lifecycle_and_tick() {
 }
 
 #[test]
-fn backup_and_restore_app_data_roundtrip() {
+fn backup_and_restore_system_data_roundtrip() {
     use pomelo_hal::backup::{
-        backup_app_data_to_file, has_backup_at_file, restore_app_data_from_file,
+        backup_system_data_to_file, has_backup_at_file, restore_system_data_from_file,
     };
     use pomelo_hal::storage::{kv_get_raw, kv_set_raw, kv_clear_all};
 
     let test_dir = std::env::temp_dir().join(format!("pomelo_backup_test_{}", std::process::id()));
-    let backup_file = test_dir.join("sdcard/Backup/app_data.json");
+    let backup_file = test_dir.join("sdcard/Backup/system_data.json");
 
     let _ = std::fs::remove_dir_all(&test_dir);
-    std::env::set_var("POMELO_APP_DATA", &test_dir);
+    std::env::set_var("POMELO_STORAGE_DIR", &test_dir);
 
     // 1. Write KV configurations
     kv_set_raw("WIFI", "credentials", b"{\"ssid\":\"HomeNet\",\"enabled\":true}").unwrap();
@@ -476,7 +476,7 @@ fn backup_and_restore_app_data_roundtrip() {
     assert!(!has_backup_at_file(&backup_file));
 
     // 2. Perform backup
-    let stats = backup_app_data_to_file(&backup_file).expect("backup should succeed");
+    let stats = backup_system_data_to_file(&backup_file).expect("backup should succeed");
     assert!(stats.files_count >= 2);
     assert!(stats.bytes_count > 0);
     assert!(has_backup_at_file(&backup_file));
@@ -486,7 +486,7 @@ fn backup_and_restore_app_data_roundtrip() {
     assert_eq!(kv_get_raw("WIFI", "credentials").unwrap(), None);
 
     // 4. Perform restore
-    let restore_stats = restore_app_data_from_file(&backup_file).expect("restore should succeed");
+    let restore_stats = restore_system_data_from_file(&backup_file).expect("restore should succeed");
     assert!(restore_stats.files_count >= 2);
 
     // 5. Verify restored state
@@ -499,18 +499,18 @@ fn backup_and_restore_app_data_roundtrip() {
     let settings_val: serde_json::Value = serde_json::from_slice(&settings_bytes).unwrap();
     assert_eq!(settings_val["dark"], true);
 
-    std::env::remove_var("POMELO_APP_DATA");
+    std::env::remove_var("POMELO_STORAGE_DIR");
     let _ = std::fs::remove_dir_all(&test_dir);
 }
 
 #[test]
 fn backup_error_handling_for_nonexistent_dirs() {
-    use pomelo_hal::backup::restore_app_data_from_file;
+    use pomelo_hal::backup::restore_system_data_from_file;
 
     let test_dir = std::env::temp_dir().join(format!("pomelo_backup_err_{}", std::process::id()));
     let non_existent = test_dir.join("ghost_file.json");
 
-    assert!(restore_app_data_from_file(&non_existent).is_err());
+    assert!(restore_system_data_from_file(&non_existent).is_err());
 
     let _ = std::fs::remove_dir_all(&test_dir);
 }

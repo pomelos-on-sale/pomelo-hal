@@ -38,7 +38,7 @@ pub mod wifi_credentials;
 pub mod sim;
 
 pub use audio_decoder::{format_time, probe_audio_meta, AudioDecoder};
-pub use backup::{backup_app_data, has_backup, restore_app_data};
+pub use backup::{backup_system_data, has_backup, restore_system_data};
 pub use board::Board;
 pub use error::HalError;
 pub use storage::{
