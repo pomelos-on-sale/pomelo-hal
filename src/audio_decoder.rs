@@ -25,7 +25,7 @@ pub struct AudioDecoder {
     decoder: Box<dyn Decoder + Send>,
     track_id: u32,
     meta: AudioMeta,
-    sample_buf: Option<SampleBuffer<i16>>,
+    sample_buf: Vec<i16>,
     sample_offset: usize,
 }
 
@@ -114,7 +114,7 @@ impl AudioDecoder {
             decoder,
             track_id,
             meta,
-            sample_buf: None,
+            sample_buf: Vec::new(),
             sample_offset: 0,
         })
     }
@@ -143,20 +143,14 @@ impl Read for AudioDecoder {
 
         loop {
             // 1. Drain any already-decoded PCM samples in sample_buf
-            if let Some(ref sbuf) = self.sample_buf {
-                let samples = sbuf.samples();
-                while self.sample_offset < samples.len() && bytes_written + 2 <= buf.len() {
-                    let sample = samples[self.sample_offset];
+            if self.sample_offset < self.sample_buf.len() {
+                while self.sample_offset < self.sample_buf.len() && bytes_written + 2 <= buf.len() {
+                    let sample = self.sample_buf[self.sample_offset];
                     let le_bytes = sample.to_le_bytes();
                     buf[bytes_written] = le_bytes[0];
                     buf[bytes_written + 1] = le_bytes[1];
                     bytes_written += 2;
                     self.sample_offset += 1;
-                }
-
-                if self.sample_offset >= samples.len() {
-                    self.sample_buf = None;
-                    self.sample_offset = 0;
                 }
 
                 // If we filled the destination buffer, return bytes read
@@ -176,9 +170,36 @@ impl Read for AudioDecoder {
                         Ok(decoded) => {
                             let spec = *decoded.spec();
                             let duration = decoded.capacity() as u64;
-                            let mut sbuf = SampleBuffer::<i16>::new(duration, spec);
-                            sbuf.copy_interleaved_ref(decoded);
-                            self.sample_buf = Some(sbuf);
+                            let mut fbuf = SampleBuffer::<f32>::new(duration, spec);
+                            fbuf.copy_interleaved_ref(decoded);
+                            let f_samples = fbuf.samples();
+
+                            self.sample_buf.clear();
+                            let channels = spec.channels.count();
+                            // Apply a 0.98 (-0.18 dB) true-peak headroom factor to prevent clipping without sacrificing loudness
+                            const HEADROOM: f32 = 0.98;
+
+                            if channels == 2 {
+                                self.sample_buf.reserve(f_samples.len());
+                                for chunk in f_samples.chunks_exact(2) {
+                                    let l = chunk[0];
+                                    let r = chunk[1];
+                                    // Downmix stereo to mono and apply headroom
+                                    let mixed = (l + r) * 0.5 * HEADROOM;
+                                    let clamped = mixed.clamp(-1.0, 1.0);
+                                    let s = (clamped * 32767.0).round() as i16;
+                                    // Duplicate mixed mono to both L & R slots so ES8311 mono DAC preserves all audio
+                                    self.sample_buf.push(s);
+                                    self.sample_buf.push(s);
+                                }
+                            } else {
+                                self.sample_buf.reserve(f_samples.len());
+                                for &s in f_samples {
+                                    let scaled = (s * HEADROOM).clamp(-1.0, 1.0);
+                                    let sample_i16 = (scaled * 32767.0).round() as i16;
+                                    self.sample_buf.push(sample_i16);
+                                }
+                            }
                             self.sample_offset = 0;
                         }
                         Err(SymphoniaError::DecodeError(e)) => {
