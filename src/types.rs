@@ -274,6 +274,14 @@ pub enum SystemEvent {
         id: String,
         wake_screen: bool,
     },
+    /// Periodic system minute tick, emitted precisely when wall-clock second reaches 00.
+    MinuteTick {
+        unix_secs: u64,
+    },
+    /// Periodic system second tick, emitted every second.
+    SecondTick {
+        unix_secs: u64,
+    },
 }
 
 /// The reason why the system woke up from low-power sleep.

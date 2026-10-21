@@ -30,6 +30,8 @@ struct EventStateCache {
     last_charging: Option<bool>,
     last_wifi_status: Option<WifiStatus>,
     last_sd_status: Option<SdCardStatus>,
+    last_second: Option<u64>,
+    last_minute: Option<u32>,
 }
 
 /// A shared handle to every hardware subsystem.
@@ -161,6 +163,24 @@ impl Board {
         } else {
             false
         }
+    }
+
+    /// Register a callback invoked on every system minute tick (fires when wall-clock second reaches 00).
+    pub fn on_minute_tick(&self, listener: impl Fn(u64) + Send + Sync + 'static) -> u64 {
+        self.on_event(move |event| {
+            if let SystemEvent::MinuteTick { unix_secs } = event {
+                listener(*unix_secs);
+            }
+        })
+    }
+
+    /// Register a callback invoked on every system second tick.
+    pub fn on_second_tick(&self, listener: impl Fn(u64) + Send + Sync + 'static) -> u64 {
+        self.on_event(move |event| {
+            if let SystemEvent::SecondTick { unix_secs } = event {
+                listener(*unix_secs);
+            }
+        })
     }
 
     /// Broadcast an event to all registered listeners and queue it for synchronous consumers.
@@ -397,6 +417,23 @@ impl Board {
                 if cache.last_sd_status != Some(sd_status) {
                     cache.last_sd_status = Some(sd_status);
                     events_to_emit.push(SystemEvent::SdCardChanged(sd_status));
+                }
+
+                // 5. Check second and minute tick for simulated clock
+                if let Ok(duration) =
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                {
+                    let total_secs = duration.as_secs();
+                    if cache.last_second != Some(total_secs) {
+                        cache.last_second = Some(total_secs);
+                        events_to_emit.push(SystemEvent::SecondTick { unix_secs: total_secs });
+
+                        let current_minute = (total_secs / 60) as u32;
+                        if cache.last_minute != Some(current_minute) {
+                            cache.last_minute = Some(current_minute);
+                            events_to_emit.push(SystemEvent::MinuteTick { unix_secs: total_secs });
+                        }
+                    }
                 }
             }
 
