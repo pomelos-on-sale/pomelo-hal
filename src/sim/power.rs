@@ -16,6 +16,7 @@ pub struct SimPower {
     stay_awake_on_usb: bool,
     usb_connected: bool,
     keep_screen_on: bool,
+    brightness: u8,
 }
 
 impl SimPower {
@@ -30,6 +31,7 @@ impl SimPower {
             stay_awake_on_usb: true,
             usb_connected: true,
             keep_screen_on: false,
+            brightness: 100,
         }
     }
 
@@ -79,6 +81,15 @@ impl PowerBackend for SimPower {
 
     fn screen_off_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(self.screen_off_timeout)
+    }
+
+    fn set_display_brightness(&mut self, percent: u8) -> Result<(), HalError> {
+        self.brightness = percent.clamp(10, 100);
+        Ok(())
+    }
+
+    fn display_brightness(&self) -> Result<u8, HalError> {
+        Ok(self.brightness)
     }
 
     fn reboot(&mut self) -> Result<(), HalError> {

@@ -215,6 +215,16 @@ impl Board {
         self.power().reboot()
     }
 
+    /// Get the current display brightness (10..=100).
+    pub fn display_brightness(&self) -> u8 {
+        self.power().display_brightness().unwrap_or(100)
+    }
+
+    /// Set the display brightness (10..=100).
+    pub fn set_display_brightness(&self, percent: u8) {
+        let _ = self.power().set_display_brightness(percent);
+    }
+
     /// Lock the Wi-Fi backend.
     pub fn wifi(&self) -> MutexGuard<'_, Box<dyn WifiBackend>> {
         lock(&self.wifi)

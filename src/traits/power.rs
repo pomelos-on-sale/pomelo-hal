@@ -30,6 +30,14 @@ pub trait PowerBackend: Send + Sync {
     fn screen_off_timeout(&self) -> Result<Option<Duration>, HalError> {
         Ok(None)
     }
+    /// Sets display brightness level in percentage (10..=100%). Default is a no-op returning `Ok(())`.
+    fn set_display_brightness(&mut self, _percent: u8) -> Result<(), HalError> {
+        Ok(())
+    }
+    /// Current display brightness level in percentage (10..=100%). Default returns `Ok(100)`.
+    fn display_brightness(&self) -> Result<u8, HalError> {
+        Ok(100)
+    }
     /// Reboots the system / device. Default implementation is a no-op returning `Ok(())`.
     fn reboot(&mut self) -> Result<(), HalError> {
         Ok(())
