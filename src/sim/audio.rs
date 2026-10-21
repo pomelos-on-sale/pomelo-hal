@@ -269,6 +269,10 @@ impl AudioBackend for SimAudio {
         self.send(SimAudioCommand::SetVolume(self.volume as f32 / 100.0));
     }
 
+    fn volume(&self) -> u8 {
+        self.volume
+    }
+
     fn is_playing(&self) -> bool {
         self.is_playing && !self.paused
     }

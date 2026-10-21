@@ -225,6 +225,16 @@ impl Board {
         lock(&self.audio)
     }
 
+    /// Get the current audio volume (0..=100).
+    pub fn volume(&self) -> u8 {
+        self.audio().volume()
+    }
+
+    /// Set the audio volume (0..=100).
+    pub fn set_volume(&self, volume: u8) {
+        self.audio().set_volume(volume);
+    }
+
     /// Lock the microphone backend.
     pub fn mic(&self) -> MutexGuard<'_, Box<dyn MicBackend>> {
         lock(&self.mic)

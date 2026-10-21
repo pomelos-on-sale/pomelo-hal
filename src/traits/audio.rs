@@ -46,6 +46,10 @@ pub trait AudioBackend: Send + Sync {
     fn resume(&mut self);
     fn stop(&mut self);
     fn set_volume(&mut self, volume: u8);
+    /// Current volume level (0..=100). Defaults to 75.
+    fn volume(&self) -> u8 {
+        75
+    }
     fn is_playing(&self) -> bool;
     /// Playback position in seconds.
     fn position_secs(&self) -> f32;
